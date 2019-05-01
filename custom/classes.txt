@@ -1,0 +1,28 @@
+# CI Classes to expire
+ComputerSystem
+AppServer
+Segment
+Service
+OperatingSystem
+CPU
+PhysicalPackage
+PhysicalConnector
+# archive script will not expire subclasses
+Vlan
+# archive script will expire all orphans irrespective of age
+L2Interface
+# CI Classes to expire that potentially have superiors
+# should archive WebSphere CIs before BindAddress
+WebSphereNamedEndpoint
+WebSphereJ2EEResourceProperty
+SoftwareResource
+WebSphereVariable
+# should archive ServiceAccessPoint before BindAddress
+ServiceAccessPoint
+LogicalContent
+Fqdn
+IpAddress
+BindAddress
+# Other CI Classes to expire
+IpNetwork
+ComputerSystemCluster
