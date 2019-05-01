@@ -1,0 +1,7 @@
+*.zip
+*.log
+*.out
+*.tar
+scopes/*.scope
+efix/backup*.jar
+archive
