@@ -1,0 +1,386 @@
+#!/usr/bin/env ../bin/jython_coll
+
+############### Begin Standard Header - Do not add comments here ###############
+#
+# File:     %W%
+# Version:  %I%
+# Modified: %G% %U%
+# Build:    %R% %L%
+#
+# Licensed Materials - Property of IBM
+#
+# Restricted Materials of IBM
+#
+# 5724-N55
+#
+# (C) COPYRIGHT IBM CORP. 2007.  All Rights Reserved.
+#
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+#
+############################# End Standard Header ##############################
+
+'''
+Main comment block, Beginning of Script
+
+SCRIPT OVERVIEW (This section would be used by doc gnerators)
+
+capp.jy -- Run custom server templates against runtime processes
+
+DESCRIPTION:
+
+CAVEATS:
+
+   Tested in 7.2.2.2
+
+
+Author:  Mat Davis
+     mdavis5@us.ibm.com
+
+
+History:
+    Version 0.5 -- 5/13/2010 -- Initial Version --
+'''
+# Standard Jython/Python Library Imports
+
+import sys
+import java
+import os
+
+# from Java [additional imports - not sure why]...
+from java.lang import Class
+from java.lang import System
+from java.util import Properties
+from java.lang import Boolean
+
+
+# Set the Path information
+coll_home = System.getProperty("com.collation.home")
+System.setProperty("jython.home",coll_home + "/external/jython-2.1")
+System.setProperty("python.home",coll_home + "/external/jython-2.1")
+
+jython_home = System.getProperty("jython.home")
+sys.path.append(jython_home + "/Lib")
+sys.path.append(coll_home + "/lib")
+sys.path.append(coll_home + "/lib/sensor-tools")
+sys.prefix = jython_home + "/Lib"
+
+# Import the TADDM Java Libraries  [Following Required for api access]
+from com.collation.platform.util import Props
+from com.collation.proxy.api.client import *
+from com.ibm.cdb.api import ApiFactory
+from com.collation.platform.util import ModelFactory
+from com.collation.platform.model import Guid
+from com.collation.platform.logger import LogFactory
+from com.ibm.cdb.topomgr import TopologyManagerFactory
+from com.ibm.cdb.topomgr import TopomgrProps
+
+# More Standard Jython/Python Library Imports
+import traceback
+import string
+import re
+import jarray
+import getopt
+import pprint
+import time
+
+import sensorhelper
+
+# Some default GLOBAL Values (Typically these should be in ALL CAPS)
+
+False = Boolean(0)
+True = Boolean(1)
+
+VERSION = "0.5"
+
+#
+# Set up logging...
+#
+System.setProperty("com.collation.LogFile","capp.log")
+#global log
+log = LogFactory.getLogger("capp")
+
+########################
+# LogError      Error logger
+########################
+
+def LogError(msg):
+        log.error(msg)
+        (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+        traceback.print_exc(ErrorTB)
+
+########################
+# LogInfo
+########################
+def LogInfo(msg):
+    #print msg
+    log.info(msg)
+
+########################
+# LogDebug
+########################
+def LogDebug(msg):
+    log.debug(msg)
+
+def usage():
+    print """ \
+usage: capp.jy [options] 
+
+   Run custom server templates against runtime processes
+
+    Options:
+
+    -u userid           User required to login to TADDM Server
+                        Defaults to 'administrator'
+
+    -p password         Password for TADDM Server user
+                        Defaults to 'collation'
+                        
+    -H displayName      Specific display name of ComputerSystem to scan for runtime processes
+
+    -t template         Custom server template name to use for filtering
+
+    -h                  print this message
+
+    """
+
+
+def jHashMaptoPyDict(hm):
+     dict = {}
+     iter = hm.keySet().iterator()
+     while iter.hasNext():
+         key = iter.next()
+         dict[str(key)] = hm.get(key)
+     return dict
+
+def main():
+
+    try:
+        LogInfo("Starting...") 
+        try:
+            opts, args = getopt.getopt(sys.argv[1:], 'u:p:t:H:h', ['help'] )
+        except getopt.GetoptError, err:
+            # print help information and exit:
+            print str(err) # will print something like "option -a not recognized"
+            usage()
+            sys.exit(2)
+        
+        LogDebug("Options " + str(opts))
+        userid = None
+        password = None
+        display_name = None
+        template = None
+        for o, a in opts:
+            if o == "-u":
+                userid = a
+            elif o == "-p":
+                password = a
+            elif o == "-t":
+                template = a
+            elif o == "-H":
+                display_name = a
+            elif o in ("-h", "--help"):
+                usage()
+                sys.exit()
+            else:
+                assert False, "unhandled option"
+
+        if display_name is None or template is None:
+            print 'Option -H for display name and -t template name are required.'
+            usage()
+            sys.exit()
+                
+        #------------------------------------------------
+        # Set Defaults...
+        #------------------------------------------------
+        host = "localhost"       # we default to localhost
+
+        if userid is None:
+            userid = "administrator"
+
+        if password is None:
+            password = "collation"
+        #
+        # Initialize
+        #
+
+        LogDebug('Initializing API')
+        LogDebug("Creating TADDM API Connection")
+        if host is "localhost":
+            conn = ApiFactory.getInstance().getApiConnection(-1,None,0)
+        else:
+            conn = ApiFactory.getInstance().getApiConnection(host,-1,None,0)
+        sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
+        api = sess.createCMDBApi()
+        LogDebug("TADDM API Connection CREATED")
+
+        # get custom server template
+        boolExp = None
+        filters = None
+        mo_data = api.executeQuery('select * from com.collation.platform.model.discovery.template.Template where name == \'' + str(template) + '\'', 1, None, None)
+        if (mo_data.next()):
+            cst = mo_data.getModelObject(3)
+            if (cst.getEnabled()):
+                filterset = cst.getFilterSet()
+                boolExp = filterset.getBoolExp()
+                filters = filterset.getFilterList()
+            else:
+                print 'Custom Server is not enabled. Log on to console and enable custom server template.'
+                api.close()
+                sess.release();
+                conn.release();
+        
+                sys.exit(1)
+            
+        else:
+            print 'No custom server found matching name \'' + str(template) + '\''
+            api.close()
+            sess.release();
+            conn.release();
+    
+            sys.exit(1)
+            
+        mql_query = 'select RuntimeProcess.* from ComputerSystem, RuntimeProcess where ComputerSystem.displayName == \'' + str(display_name) + '\' and RuntimeProcess.parent.guid == ComputerSystem.OSRunning.guid and RuntimeProcess.unattached'
+        LogDebug("Executing query: " + str(mql_query))
+        mo_data = api.executeQuery(str(mql_query), 1 , None, None)
+        
+        found = False
+        while mo_data.next():
+            found = True
+            rtproc = mo_data.getModelObject(1)
+            
+            command = rtproc.getCommand()
+            LogDebug('command: '+command)
+            cmdLine = rtproc.getCmdLine()
+            argument = cmdLine.replace(command + ' ', '', 1)
+            LogDebug('argument: '+argument)
+            # boolExp 0='AND' 1='OR'
+            matches = False
+            for filter in filters:
+                LogDebug('filter: '+str(filter))
+                part = filter.getPart()
+                operator = filter.getOperator()
+                operand1 = filter.getOperand1()
+                if part == 'Program Name':
+                    LogDebug('Checking program name')
+                    if operator == 'contains':
+                        LogDebug('Checking contains '+str(command.find(operand1)))
+                        if command.find(operand1) != -1:
+                            LogDebug('command contains operand1')
+                            matches = True
+                        elif boolExp == 0:
+                            LogDebug('breaking')
+                            matches = False
+                            break
+                    elif operator == 'ends-with':
+                        LogDebug('Checking ends-with '+str(command.endswith(operand1)))
+                        if command.endswith(operand1) == 1:
+                            LogDebug('command ends-with operand1')
+                            matches = True
+                        elif boolExp == 0:
+                            LogDebug('breaking')
+                            matches = False
+                            break
+                    elif operator == 'is':
+                        LogDebug('Checking is '+str(command == operand1))
+                        if command == operand1:
+                            LogDebug('command is operand1')
+                            matches = True
+                        elif boolExp == 0:
+                            LogDebug('breaking')
+                            matches = False
+                            break
+                if part == 'Argument':
+                    if operator == 'contains':
+                        LogDebug('Checking contains '+str(argument.find(operand1)))
+                        if argument.find(operand1) != -1:
+                            LogDebug('argument contains operand1')
+                            matches = True
+                        elif boolExp == 0:
+                            LogDebug('breaking')
+                            matches = False
+                            break
+                    elif operator == 'ends-with':
+                        LogDebug('Checking ends-with '+str(argument.endswith(operand1)))
+                        if argument.endswith(operand1) == 1:
+                            LogDebug('argument ends-with operand1')
+                            matches = True
+                        elif boolExp == 0:
+                            LogDebug('breaking')
+                            matches = False
+                            break
+                    elif operator == 'is':
+                        LogDebug('Checking is '+str(argument == operand1))
+                        if argument == operand1:
+                            LogDebug('argument is operand1')
+                            matches = True
+                        elif boolExp == 0:
+                            LogDebug('breaking')
+                            matches = False
+                            break
+            
+            if matches is False:
+                LogDebug('Process doesn\'t match filter, continuing')
+                LogDebug('')
+                continue
+            LogDebug('')
+            
+            print 'Found matching process: ', cmdLine
+            print 'Creating custom server for matching process'
+            print
+            
+            rtproc.setUnattached(False)
+            aServer = sensorhelper.newModelObject('cdm:app.AppServer')
+            aServer.setStatus(1)
+            aServer.setKeyName('AppServer')
+            os = rtproc.getParent()
+            cs_data = api.executeQuery("select * from ComputerSystem where OSRunning.guid == '" + str(os.getGuid()) + "'", 0, None, None)
+            if (cs_data.next()):
+                cs = cs_data.getModelObject(0)
+                aServer.setHost(cs)
+            if rtproc.hasPorts():
+                aServer.setPrimarySAP(rtproc.getPorts()[0])
+            procPool = sensorhelper.newModelObject('cdm:app.ProcessPool')
+            procPool.setParent(aServer)
+            procPool.setName('ProcessPool')
+            procPool.setCmdLine(rtproc.getCmdLine())
+            procPool.setEnv(rtproc.getEnv())
+            procs = []
+            procs.append(rtproc)
+            procPool.setRuntimeProcesses(sensorhelper.getArray(procs,'cdm:sys.RuntimeProcess'))
+            procPool.setContextIp(rtproc.getContextIp())
+            pools = []
+            pools.append(procPool)
+            aServer.setProcessPools(sensorhelper.getArray(pools,'cdm:app.ProcessPool'))
+            aServer.setContextIp(rtproc.getContextIp())
+            # use the template name here
+            aServer.setObjectType(str(template))
+            api.update(aServer, None)
+
+        if found is False:
+            print 'No unattached runtime processes were found for the system'
+            print 'Here are some things to verify'
+            print ' 1) The display name given matches the system in TADDM and that it exists'
+            print ' 2) The background topology group has run to mark the processes as unattached.  You can run this manually from a storage server by issuing the following:'
+            print '    support/bin/runtopobuild.sh -g background -w'
+            
+        api.close()
+        sess.release();
+        conn.release();
+    except SystemExit, desc:
+        # known exit
+        pass
+    except Exception, desc:
+        print "General error: " 
+        print desc
+    
+    
+    sys.exit(0)
+
+#=====================================================================================
+#   MAIN
+#=====================================================================================
+
+if __name__ == "__main__":
+    main()
+
