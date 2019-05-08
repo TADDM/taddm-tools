@@ -1,0 +1,8 @@
+<CTSTemplate>
+	<name>vipr</name>
+	<result-class>com.ibm.cdb.discover.result.sys.PortListResult</result-class>
+	<plugin-id>com.ibm.cdb.discover.sensor.sys.portscan_7.6.3</plugin-id>
+	<engine-id>com.ibm.cdb.core.jython253_2.5.3</engine-id>
+	<matcher-script>matcher.py</matcher-script>
+	<sensor-script>sensor.py</sensor-script>
+</CTSTemplate>
