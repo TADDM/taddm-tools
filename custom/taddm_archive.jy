@@ -1,0 +1,2272 @@
+#!/usr/bin/env ../bin/jython_coll_253
+
+############### Begin Standard Header - Do not add comments here ###############
+#
+# File:     %W%
+# Version:  %I%
+# Modified: %G% %U%
+# Build:    %R% %L%
+#
+# Licensed Materials - Property of IBM
+#
+# Restricted Materials of IBM
+#
+# 5724-N55
+#
+# (C) COPYRIGHT IBM CORP. 2007.  All Rights Reserved.
+#
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+#
+############################# End Standard Header ##############################
+
+'''
+Main comment block, Beginning of Script
+
+SCRIPT OVERVIEW (This section would be used by doc generators)
+
+taddm_archive.jy -- This script is used to find Old data, remove it and optionally archive it
+
+DESCRIPTION:
+
+CAVEATS:
+
+   Tested in 7.3.0.2, 7.3.0.1, 7.2.1.3, 7.2.2.0, 7.2.2.1   
+
+
+Author:  Mat Davis (current author)
+     mdavis5@us.ibm.com
+         Scott Graham (original author)
+     swgraham@us.ibm.com
+
+History:
+    Version 0.5 -- 5/13/2010 -- Initial Version -- SWG
+    Version 0.6 -- 7/28/2010 -- made to work w/ 7.2 -- SWG
+    Version 1.0 -- 09/21/2010 -- Fixed some exceptions that occured and were reported 
+                                 via the Forum. 
+                                 Improved startup time by removing unnecessary imports.
+    Version 1.1 -- 10/25/2011 -- Modified to use cursor based query to prevent OOMs.
+                                 Added option (-s scope_name) to create a scope in order
+                                 to try and discover if you want.
+    Version 2.0 -- 01/02/2014 -- Changed to use direct DB queries to build out GUID list,
+                                 added many best practices from cleanup technote, tested on 7.2.2
+    Version 2.1 -- 08/26/2014 -- Changed DB2 queries related to superiors to remove HEX function
+                                 for performance improvement
+    Version 2.2 -- 08/06/2015 -- Added flag to print lastStoredTime
+                                 Added flag to use specific epoch instead of Age (in days)
+                                 Updated views for 7.3 to include new views for db calls
+                                 Updated to use upgraded Jython v2.5.3 in TADDM v7.3
+    Version 2.3 -- 09/28/2015 -- Fixed bug in DB2 call with superior checking
+    Version 2.4 -- 11/18/2015 -- Added threading for performance
+    Version 2.5 -- 12/18/2015 -- Added code to skip delete of components where a session sensor has 
+                                 failed for the contextIp in the last week
+'''
+# Standard Jython/Python Library Imports
+
+import sys
+import java
+import os
+
+# from Java [additional imports - not sure why]...
+from java.sql import DriverManager
+from java.sql import Statement
+from java.sql import SQLException
+from java.lang import Class
+from java.lang import System
+from java.util import Properties
+from java.lang import Boolean
+
+
+# Set the Path information
+coll_home = System.getProperty("com.collation.home")
+#System.setProperty("jython.home",coll_home + "/external/jython-2.1")
+#System.setProperty("python.home",coll_home + "/external/jython-2.1")
+System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython253_2.5.3/lib")
+System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython253_2.5.3/lib")
+
+jython_home = System.getProperty("jython.home")
+sys.path.append(jython_home + "/Lib")
+sys.path.append(coll_home + "/lib/sensor-tools")
+sys.prefix = jython_home + "/Lib"
+
+# Import the TADDM Java Libraries  [Following Required for api access]
+from com.collation.platform.util import Props
+from com.collation.proxy.api.client import *
+from com.ibm.cdb.api import ApiFactory
+from com.collation.platform.util import ModelFactory
+from com.collation.platform.model import Guid
+from com.collation.platform.os import OsUtils
+from com.collation.platform.logger import LogFactory
+from com.ibm.cdb.topomgr import TopologyManagerFactory
+from com.ibm.cdb.topomgr import TopomgrProps
+
+# More Standard Jython/Python Library Imports
+import traceback
+import string
+import re
+import jarray
+import getopt
+import pprint
+import time
+import logging
+import threading
+
+import sensorhelper
+
+# Some default GLOBAL Values (Typically these should be in ALL CAPS)
+
+False = Boolean(0)
+True = Boolean(1)
+
+VERSION = "2.4"
+
+#
+# Set up logging...
+#
+logging.basicConfig(filename=coll_home + '/log/taddm_archive.log',level=logging.INFO,
+                    format='%(asctime)-15s (%(threadName)-10s) %(message)s',
+                    )
+
+########################
+# LogError      Error logger
+########################
+
+def LogError(msg):
+        logging.error(msg)
+        (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+        traceback.print_exc(ErrorTB)
+
+########################
+# LogInfo
+########################
+def LogInfo(msg):
+    #print msg
+    logging.info(msg)
+
+########################
+# LogDebug
+########################
+def LogDebug(msg):
+    logging.debug(msg)
+
+def usage():
+    print """ \
+usage: script_name [options] 
+   or: script_name [options] -H displayName|-A days [ -S -D -C -E dir]
+
+
+   Return Model Objects that have not been modifed in AGE Days.  Optionally
+   Save and Delete these objects
+
+    Options:
+
+    -u userid           User required to login to TADDM Server
+                        Defaults to 'administrator'
+
+    -p password         Password for TADDM Server user
+                        Defaults to 'collation'
+
+    -h                  print this message
+
+
+    Arguments:
+
+    -A age             Use Age in DAYS as time to consider something old for 
+                       ClassName (defaults to ComputerSystem)
+                       An age of '0' will return all objects in the class.
+    -S                 Save Objects that are 'Old' in XML format
+    -s scope_name      Create a scope named 'scope_name' of old machines          
+    -H                 displayName -- Ignore age and use this specific displayname
+    -C                 Classname to examine -- Defaults to ComputerSystem -- a good
+                       alternative would be AppServer
+    -L num             Limit results to a maximum of num
+    -D                 Delete the objects that are considered OLD
+    -E dir             Export Directory (must exist) defaults to current directory
+    -c                 Limit to Classname only and do not include the sub-classes -- 
+                       For example, query ComputerSystem instances but not 
+                       WindowsComputerSystem instances
+    --l2orphans        Use all L2Interface instances that are orphans irrespective of
+                       age. -C option must be 'L2Interface'. -A option must be 0.
+    --chk_sups         Check the superiors table to ensure that the instances are
+                       not part of a naming rule
+    --skip_zos         Skip all zOS components, recommended if running z/OS DLA in
+                       delta mode.
+    -q                 Display the SQL query used
+    --print_laststored Display LastStored in addition to GUID and DisplayName
+    --epoch=<time>     Use specific epoch formated time instead of -A age option
+    --skip_failed=<weeks>      
+                       Skip deletion of components if there is a failed session sensor
+                       matching the contexIp in the last <weeks> week(s).
+    -t num             Number of threads to use for deletion, ignored if -D is not used, 
+                       Defaults to single thread
+    """
+
+def print_options(*args):
+    for line in args:
+        print "    " + str(line)
+
+def print_action_header(msg):
+    print 75*"="
+    l = len(msg)
+    padding = (75-l)/2
+    print padding*" " + msg
+    print 75*"="
+
+def print_model_objects(mo_list,print_laststored):
+    print_model_object_header(print_laststored)
+    for mo in mo_list:
+        print_model_object(mo,print_laststored)
+
+def print_model_object_header(print_laststored):
+    print ""
+    if print_laststored is True:
+        print 86*"-"
+        print "%32s %30s %20s" % ("GUID", "DisplayName", "LastStored")
+        print 86*"-"
+    else:
+        print 65*"-"
+        print "%32s %30s" % ("GUID", "DisplayName")
+        print 65*"-"
+    
+def print_model_object(mo,print_laststored):
+    try: 
+        display_name=mo.getLabel()
+    except:
+        try: 
+            display_name=mo.getDisplayName()
+        except:
+            display_name=None
+    
+    if print_laststored == True:
+        print "%32s %30s %20s" % (mo.getGuid(), display_name.encode('utf-8'), mo.getLastStoredTime())
+    else:
+        print "%32s %30s" % (mo.getGuid(), display_name.encode('utf-8'))
+
+def array_size(array):
+    count=0
+    #array_dict=jHashMaptoPyDict(array)
+    for attr in array:
+        print "--> Attr: " + str(attr) + " class: " + str(attr.__class__)
+        attr_length = attr_size(attr)
+        count = count + attr_length
+    return count
+
+def jHashMaptoPyDict(hm):
+     dict = {}
+     iter = hm.keySet().iterator()
+     while iter.hasNext():
+         key = iter.next()
+         dict[str(key)] = hm.get(key)
+     return dict
+
+def write_to_xml(API, directory, model_objects):
+    # model_objects is an array...
+
+    for mo in model_objects:
+        try:
+            guid=mo.getGuid()
+        except:
+            print "Skipping a ModelObject, no GUID -- Very odd..."
+            continue
+           
+        file_name = str(mo.getGuid()) + ".xml"
+        
+        print "Writing data to " + str(file_name)
+    
+        xml_doc = API.findXML(mo.getGuid(),4,3,None) 
+        f = open(str(directory) + "/" + str(file_name),"w")
+        f.write(xml_doc.encode('ascii', 'ignore'))
+        f.close()
+
+def age_to_time(age):
+        # Note, these are in SECONDS, the find's require them in MILLISECONDS (i.e. *1000)
+        now = time.time()
+        age_l = long(60*60*24*age)
+        #print "Now: " + str(now)
+        # Convert to Milliseconds...
+        end_time =  (now - age_l)*1000
+        #print 'Using end_time ' + str(long(end_time))
+        LogDebug("Now: " + str(long(now)) + " End Time: " + str(long(end_time)))
+        return end_time
+
+class scope:
+
+    def __init__(self,API,directory,scope_name):
+        self.__api = API
+        self.__dir = directory
+        self.__scope_name = scope_name
+        self.__scope = []
+
+    def add(self,mo):
+        ip = None
+        hostname = None
+        try:
+            hostname = mo.getFqdn()
+        except:
+	    try: 
+                hostname = mo.getDisplayName()
+            except:
+                LogInfo("Can't get a Name")
+        try:
+            ip = OsUtils.getForwardDNSLookup(str(hostname))
+        except:
+            LogInfo("Failed to get IP for: " + str(hostname))
+            return "No_IP"
+        LogInfo(str(hostname) +":"+ str(ip))
+        self.__scope.append(str(ip)+",,")
+        return str(ip)
+    def save(self):
+        file_name = self.__scope_name + ".txt" 
+        if os.path.exists(self.__dir):
+            print "writing data to " + str(self.__dir) + "/" + str(file_name)
+        else:
+            print "Creating ..." + str(self.__dir)
+            os.mkdir(self.__dir)
+            print "writing data to " + str(self.__dir) + "/" + str(file_name)
+        f = open(str(self.__dir) + "/" + str(file_name),"w")
+        f.write("\n".join(self.__scope))
+        f.close()
+
+def connectToDB(driver, url, user, password):
+    LogInfo("Going to connect to database...")
+    try:
+        cls = Class.forName(driver);
+        DriverManager.registerDriver(cls.newInstance())
+        conn = DriverManager.getConnection(url, user, password)
+        return conn
+    except Exception, desc:
+        LogError("Cannot connect to database with the username: " + user)
+        raise desc
+
+def findCount(dbConnection, query):
+    LogInfo("Going to query database...")
+    try:
+        # alter query
+        myquery = query.replace('SELECT * FROM BB_BINDADDRESS67_V A', 'SELECT COUNT(GUID_C) FROM BB_BINDADDRESS67_V A').replace(' ORDER BY A.LASTMODIFIEDTIME_C ASC', '')
+        myquery = myquery.replace('SELECT * FROM BB_L2INTERFACE41_V', 'SELECT COUNT(BB_L2INTERFACE41_V.GUID_C) FROM BB_L2INTERFACE41_V')
+        myquery = myquery.replace('SELECT *','SELECT COUNT(GUID_C)').replace(' ORDER BY LASTMODIFIEDTIME_C ASC', '')
+        LogDebug('Count query: ' + myquery)
+        stmt = dbConnection.createStatement()
+        # query 
+        rs = stmt.executeQuery(myquery)
+        # get count
+        rs.next()
+        rowCount = rs.getString(1)
+        rs.close()
+        stmt.close()
+        return rowCount
+    except SQLException, desc:
+        LogError("Query to database failed with query: " + query)
+        return None
+    
+# mapping of classes to database views
+views = {
+         'AJP13JettyConnector': 'BB_AJP13JETTYCONNECTOR51_V',
+         'APPCMode': 'BB_APPCMODE87_V',
+         'AbstractResource': 'BB_ABSTRACTRESOURCE4_V',
+         'AcceptedDomain': 'BB_ACCEPTEDDOMAIN10_V',
+         'Accepts': 'BB_ACCEPTS70_V',
+         'AccessCollection': 'BB_ACCESSCOLLECTION62_V',
+         'AccessEntry': 'BB_ACCESSENTRY60_V',
+         'AccessResolveEntry': 'BB_ACCESSRESOLVEENTRY41_V',
+         'AccessedBy': 'BB_ACCESSEDBY51_V',
+         'AccessedVia': 'BB_ACCESSEDVIA34_V',
+         'AccessedViaAsPrimary': 'BB_ACCESSEDVIAASPRIMARY22_V',
+         'Accesses': 'BB_ACCESSES81_V',
+         'Account': 'BB_ACCOUNT27_V',
+         'Acl': 'BB_ACL92_V',
+         'AclFunction': 'BB_ACLFUNCTION28_V',
+         'Action': 'BB_ACTION94_V',
+         'ActiveDirectory': 'BB_ACTIVEDIRECTORY37_V',
+         'ActiveSyncVirtualDirectory': 'BB_ACTIVESYNCVIRTUALDIREC14_V',
+         'Activity': 'BB_ACTIVITY5_V',
+         'AdditionalFields': 'BB_ADDITIONALFIELDS3_V',
+         'AddressSpace': 'BB_ADDRESSSPACE4_V',
+         'AdminInfo': 'BB_ADMININFO25_V',
+         'AdminProcess': 'BB_ADMINPROCESS59_V',
+         'Administers': 'BB_ADMINISTERS70_V',
+         'Advertises': 'BB_ADVERTISES87_V',
+         'Affects': 'BB_AFFECTS93_V',
+         'Agent': 'BB_AGENT33_V',
+         'AgentConfiguration': 'BB_AGENTCONFIGURATION58_V',
+         'AgentManager': 'BB_AGENTMANAGER65_V',
+         'Aix': 'BB_AIX92_V',
+         'AixKernelDriver': 'BB_AIXKERNELDRIVER5_V',
+         'AixSoftwareComponent': 'BB_AIXSOFTWARECOMPONENT68_V',
+         'AixUnitaryComputerSystem': 'BB_AIXUNITARYCOMPUTERSYST98_V',
+         'Alert': 'BB_ALERT44_V',
+         'AllocatedTo': 'BB_ALLOCATEDTO65_V',
+         'ApacheAllowCONNECTPort': 'BB_APACHEALLOWCONNECTPORT72_V',
+         'ApacheGlobalSSLSettings': 'BB_APACHEGLOBALSSLSETTINGS50_V',
+         'ApacheModule': 'BB_APACHEMODULE86_V',
+         'ApacheProxyServer': 'BB_APACHEPROXYSERVER89_V',
+         'ApacheSSLSettings': 'BB_APACHESSLSETTINGS83_V',
+         'ApacheServer': 'BB_APACHESERVER59_V',
+         'ApacheVirtualHost': 'BB_APACHEVIRTUALHOST27_V',
+         'ApacheWebContainer': 'BB_APACHEWEBCONTAINER43_V',
+         'AppClientModule': 'BB_APPCLIENTMODULE28_V',
+         'AppConfig': 'BB_APPCONFIG57_V',
+         'AppDescriptor': 'BB_APPDESCRIPTOR82_V',
+         'AppDescriptorCapture': 'BB_APPDESCRIPTORCAPTURE86_V',
+         'AppProtocol': 'BB_APPPROTOCOL9_V',
+         'AppServer': 'BB_APPSERVER6_V',
+         'AppServerCluster': 'BB_APPSERVERCLUSTER8_V',
+         'AppServerClusterPropagatorConfiguration': 'BB_APPSERVERCLUSTERPROPAG14_V',
+         'AppServerFunctionalGroup': 'BB_APPSERVERFUNCTIONALGRO22_V',
+         'AppServerPropagatorConfiguration': 'BB_APPSERVERPROPAGATORCON62_V',
+         'AppServerTemplate': 'BB_APPSERVERTEMPLATE50_V',
+         'AppTemplate': 'BB_APPTEMPLATE78_V',
+         'Appliance': 'BB_APPLIANCE54_V',
+         'Application': 'BB_APPLICATION90_V',
+         'ApplicationComposite': 'BB_APPLICATIONCOMPOSITE54_V',
+         'ApplicationDef': 'BB_APPLICATIONDEF23_V',
+         'ApplicationDefinition': 'BB_APPLICATIONDEFINITION35_V',
+         'ApplicationDeploymentPlan': 'BB_APPLICATIONDEPLOYMENTP22_V',
+         'ApplicationPropagatorConfiguration': 'BB_APPLICATIONPROPAGATORC26_V',
+         'ApplicationTemplate': 'BB_APPLICATIONTEMPLATE42_V',
+         'ApplicationToApplicationDependency': 'BB_APPLICATIONTOAPPLICATI73_V',
+         'AppliesFrom': 'BB_APPLIESFROM79_V',
+         'AppliesTo': 'BB_APPLIESTO62_V',
+         'AssignedTo': 'BB_ASSIGNEDTO38_V',
+         'Assigns': 'BB_ASSIGNS45_V',
+         'AssignsTo': 'BB_ASSIGNSTO58_V',
+         'Association': 'BB_ASSOCIATION95_V',
+         'AtmosphericMetering': 'BB_ATMOSPHERICMETERING93_V',
+         'AttributeObject': 'BB_ATTRIBUTEOBJECT21_V',
+         'AttributePrioDataSourceIds': 'BB_ATTRIBUTEPRIODATASOURC15_V',
+         'AttributePrioDataSources': 'BB_ATTRIBUTEPRIODATASOURC54_V',
+         'AttributePrioDefinitions': 'BB_ATTRIBUTEPRIODEFINITIO92_V',
+         'AuditEntry': 'BB_AUDITENTRY16_V',
+         'AuthorizedBy': 'BB_AUTHORIZEDBY57_V',
+         'Authorizes': 'BB_AUTHORIZES15_V',
+         'BasedOn': 'BB_BASEDON95_V',
+         'BasedOnExtent': 'BB_BASEDONEXTENT34_V',
+         'Battery': 'BB_BATTERY46_V',
+         'BidiProfile': 'BB_BIDIPROFILE80_V',
+         'BigIPRealServer': 'BB_BIGIPREALSERVER54_V',
+         'BigIPRealServerGroup': 'BB_BIGIPREALSERVERGROUP95_V',
+         'BigIPVip': 'BB_BIGIPVIP0_V',
+         'BigIPVipFunction': 'BB_BIGIPVIPFUNCTION40_V',
+         'BigIPVirtualService': 'BB_BIGIPVIRTUALSERVICE91_V',
+         'BigIPVlan': 'BB_BIGIPVLAN16_V',
+         'BindAddress': 'BB_BINDADDRESS67_V',
+         'BindsAsPrimary': 'BB_BINDSASPRIMARY37_V',
+         'BindsTo': 'BB_BINDSTO12_V',
+         'BizAppDescriptor': 'BB_BIZAPPDESCRIPTOR19_V',
+         'BizTalkGroup': 'BB_BIZTALKGROUP95_V',
+         'BizTalkHost': 'BB_BIZTALKHOST74_V',
+         'BizTalkHostInstance': 'BB_BIZTALKHOSTINSTANCE47_V',
+         'BizTalkReceiveAdapter': 'BB_BIZTALKRECEIVEADAPTER46_V',
+         'BizTalkSendAdapter': 'BB_BIZTALKSENDADAPTER65_V',
+         'BizTalkServer': 'BB_BIZTALKSERVER41_V',
+         'BiztalkApplication': 'BB_BIZTALKAPPLICATION18_V',
+         'BladeCenterManagementModule': 'BB_BLADECENTERMANAGEMENTM76_V',
+         'Board': 'BB_BOARD93_V',
+         'BootsFrom': 'BB_BOOTSFROM50_V',
+         'Breaker': 'BB_BREAKER22_V',
+         'BreakerPanel': 'BB_BREAKERPANEL10_V',
+         'Bridge': 'BB_BRIDGE27_V',
+         'BusinessProcess': 'BB_BUSINESSPROCESS51_V',
+         'BusinessProcessComposite': 'BB_BUSINESSPROCESSCOMPOSI5_V',
+         'BusinessSchedule': 'BB_BUSINESSSCHEDULE25_V',
+         'BusinessService': 'BB_BUSINESSSERVICE39_V',
+         'BusinessServiceComposite': 'BB_BUSINESSSERVICECOMPOSI67_V',
+         'BusinessServicePropagatorConfiguration': 'BB_BUSINESSSERVICEPROPAGA49_V',
+         'BusinessSystem': 'BB_BUSINESSSYSTEM81_V',
+         'CDMAttribute': 'BB_CDMATTRIBUTE10_V',
+         'CDMInfo': 'BB_CDMINFO40_V',
+         'CDMQuery': 'BB_CDMQUERY74_V',
+         'CGIScript': 'BB_CGISCRIPT24_V',
+         'CICSDb2Connection': 'BB_CICSDB2CONNECTION50_V',
+         'CICSDb2Entry': 'BB_CICSDB2ENTRY98_V',
+         'CICSDb2EntryTransaction': 'BB_CICSDB2ENTRYTRANSACTION24_V',
+         'CICSDocumentTemplate': 'BB_CICSDOCUMENTTEMPLATE85_V',
+         'CICSFile': 'BB_CICSFILE16_V',
+         'CICSIPICConnection': 'BB_CICSIPICCONNECTION47_V',
+         'CICSISCMROConnection': 'BB_CICSISCMROCONNECTION45_V',
+         'CICSLIBRARY': 'BB_CICSLIBRARY95_V',
+         'CICSLSRPool': 'BB_CICSLSRPOOL83_V',
+         'CICSManagingAddressSpace': 'BB_CICSMANAGINGADDRESSSPA96_V',
+         'CICSPipeline': 'BB_CICSPIPELINE50_V',
+         'CICSPlex': 'BB_CICSPLEX11_V',
+         'CICSProfile': 'BB_CICSPROFILE37_V',
+         'CICSProgram': 'BB_CICSPROGRAM44_V',
+         'CICSRegion': 'BB_CICSREGION64_V',
+         'CICSRegionGroup': 'BB_CICSREGIONGROUP43_V',
+         'CICSTCPIPService': 'BB_CICSTCPIPSERVICE55_V',
+         'CICSTDQueue': 'BB_CICSTDQUEUE11_V',
+         'CICSTransaction': 'BB_CICSTRANSACTION6_V',
+         'CICSURIMap': 'BB_CICSURIMAP80_V',
+         'CICSWUIEndpoint': 'BB_CICSWUIENDPOINT36_V',
+         'CICSWebService': 'BB_CICSWEBSERVICE1_V',
+         'CIMOM': 'BB_CIMOM9_V',
+         'CMDBDomain': 'BB_CMDBDOMAIN60_V',
+         'CMRProxy': 'BB_CMRPROXY14_V',
+         'CPU': 'BB_CPU10_V',
+         'CPUCore': 'BB_CPUCORE57_V',
+         'CPUResourcePool': 'BB_CPURESOURCEPOOL54_V',
+         'CSMNode': 'BB_CSMNODE24_V',
+         'CachedAuthEntry': 'BB_CACHEDAUTHENTRY30_V',
+         'Capability': 'BB_CAPABILITY16_V',
+         'CapabilityGroup': 'BB_CAPABILITYGROUP69_V',
+         'Card': 'BB_CARD59_V',
+         'CertificateFile': 'BB_CERTIFICATEFILE55_V',
+         'ChannelSubSystem': 'BB_CHANNELSUBSYSTEM26_V',
+         'Chassis': 'BB_CHASSIS63_V',
+         'Chiller': 'BB_CHILLER90_V',
+         'Chip': 'BB_CHIP10_V',
+         'CiscoPixComputerSystem': 'BB_CISCOPIXCOMPUTERSYSTEM75_V',
+         'CitrixAccountAuthority': 'BB_CITRIXACCOUNTAUTHORITY98_V',
+         'CitrixAppFolder': 'BB_CITRIXAPPFOLDER1_V',
+         'CitrixApplication': 'BB_CITRIXAPPLICATION20_V',
+         'CitrixFarm': 'BB_CITRIXFARM86_V',
+         'CitrixFolder': 'BB_CITRIXFOLDER50_V',
+         'CitrixGroup': 'BB_CITRIXGROUP37_V',
+         'CitrixLicense': 'BB_CITRIXLICENSE65_V',
+         'CitrixLicensePool': 'BB_CITRIXLICENSEPOOL29_V',
+         'CitrixServer': 'BB_CITRIXSERVER47_V',
+         'CitrixServerFolder': 'BB_CITRIXSERVERFOLDER83_V',
+         'CitrixUser': 'BB_CITRIXUSER21_V',
+         'CitrixZone': 'BB_CITRIXZONE44_V',
+         'ClassObject': 'BB_CLASSOBJECT85_V',
+         'ClassPathEntry': 'BB_CLASSPATHENTRY26_V',
+         'ClientAccess': 'BB_CLIENTACCESS46_V',
+         'Collection': 'BB_COLLECTION12_V',
+         'CommandForwarderConfiguration': 'BB_COMMANDFORWARDERCONFIG22_V',
+         'CommunityServer': 'BB_COMMUNITYSERVER51_V',
+         'Composite': 'BB_COMPOSITE57_V',
+         'CompositeAttributeDef': 'BB_COMPOSITEATTRIBUTEDEF32_V',
+         'CompositeDef': 'BB_COMPOSITEDEF78_V',
+         'ComputerRoomAirConditioner': 'BB_COMPUTERROOMAIRCONDITI29_V',
+         'ComputerSystem': 'BB_COMPUTERSYSTEM40_V',
+         'ComputerSystemCluster': 'BB_COMPUTERSYSTEMCLUSTER66_V',
+         'ComputerSystemFunctionalGroup': 'BB_COMPUTERSYSTEMFUNCTION88_V',
+         'ComputerSystemPropagatorConfiguration': 'BB_COMPUTERSYSTEMPROPAGAT86_V',
+         'ComputerSystemTemplate': 'BB_COMPUTERSYSTEMTEMPLATE4_V',
+         'ComputerSystemZoneMember': 'BB_COMPUTERSYSTEMZONEMEMB32_V',
+         'ConfigCapture': 'BB_CONFIGCAPTURE44_V',
+         'ConfigFile': 'BB_CONFIGFILE36_V',
+         'Configuration': 'BB_CONFIGURATION8_V',
+         'ConfigurationManagementCluster': 'BB_CONFIGURATIONMANAGEMEN52_V',
+         'ConfigurationManagementClusterConfigFile': 'BB_CONFIGURATIONMANAGEMEN90_V',
+         'ConfigurationManagementNode': 'BB_CONFIGURATIONMANAGEMEN84_V',
+         'ConfigurationManagementNodeGroup': 'BB_CONFIGURATIONMANAGEMEN81_V',
+         'ConfiguredUsing': 'BB_CONFIGUREDUSING23_V',
+         'ConnectedFrom': 'BB_CONNECTEDFROM86_V',
+         'ConnectedTo': 'BB_CONNECTEDTO69_V',
+         'Connection': 'BB_CONNECTION48_V',
+         'ConnectorModule': 'BB_CONNECTORMODULE87_V',
+         'Connects': 'BB_CONNECTS38_V',
+         'ConnectsAEnd': 'BB_CONNECTSAEND16_V',
+         'ConnectsZEnd': 'BB_CONNECTSZEND41_V',
+         'Constraint': 'BB_CONSTRAINT57_V',
+         'ConstraintFilter': 'BB_CONSTRAINTFILTER75_V',
+         'ContactInfo': 'BB_CONTACTINFO90_V',
+         'ContactPurpose': 'BB_CONTACTPURPOSE34_V',
+         'ContainerConstraint': 'BB_CONTAINERCONSTRAINT22_V',
+         'ContainerInstance': 'BB_CONTAINERINSTANCE26_V',
+         'Contains': 'BB_CONTAINS80_V',
+         'ControlSoftware': 'BB_CONTROLSOFTWARE66_V',
+         'ControlledBy': 'BB_CONTROLLEDBY15_V',
+         'ControlledBy': 'BB_CONTROLLEDBY78_V',
+         'Controller': 'BB_CONTROLLER6_V',
+         'Controls': 'BB_CONTROLS31_V',
+         'ControlsAccess': 'BB_CONTROLSACCESS91_V',
+         'ControlsAccessFrom': 'BB_CONTROLSACCESSFROM17_V',
+         'ControlsAccessTo': 'BB_CONTROLSACCESSTO22_V',
+         'CoolingDistributionUnit': 'BB_COOLINGDISTRIBUTIONUNIT90_V',
+         'CustomBindAddress': 'BB_CUSTOMBINDADDRESS68_V',
+         'CustomCollection': 'BB_CUSTOMCOLLECTION23_V',
+         'Customer': 'BB_CUSTOMER54_V',
+         'DB2DataSharingGroup': 'BB_DB2DATASHARINGGROUP49_V',
+         'DB2Subsystem': 'BB_DB2SUBSYSTEM73_V',
+         'DHCPService': 'BB_DHCPSERVICE2_V',
+         'DNSLookup': 'BB_DNSLOOKUP41_V',
+         'DNSResolveEntry': 'BB_DNSRESOLVEENTRY51_V',
+         'DNSSAP': 'BB_DNSSAP79_V',
+         'DNSService': 'BB_DNSSERVICE98_V',
+         'Darwin': 'BB_DARWIN24_V',
+         'DarwinUnitaryComputerSystem': 'BB_DARWINUNITARYCOMPUTERS14_V',
+         'DataCenter': 'BB_DATACENTER83_V',
+         'DataFile': 'BB_DATAFILE68_V',
+         'DataPermission': 'BB_DATAPERMISSION59_V',
+         'DataPower': 'BB_DATAPOWER40_V',
+         'DataServiceCapabilities': 'BB_DATASERVICECAPABILITIES69_V',
+         'DataServiceLevelObjectiveGroup': 'BB_DATASERVICELEVELOBJECT47_V',
+         'DataStoreResourcePool': 'BB_DATASTORERESOURCEPOOL95_V',
+         'Database': 'BB_DATABASE45_V',
+         'DatabaseModule': 'BB_DATABASEMODULE19_V',
+         'DatabaseServer': 'BB_DATABASESERVER92_V',
+         'Db2AdminServer': 'BB_DB2ADMINSERVER10_V',
+         'Db2Alias': 'BB_DB2ALIAS16_V',
+         'Db2BufferPool': 'BB_DB2BUFFERPOOL96_V',
+         'Db2Container': 'BB_DB2CONTAINER7_V',
+         'Db2Database': 'BB_DB2DATABASE49_V',
+         'Db2DatabaseConfigValue': 'BB_DB2DATABASECONFIGVALUE0_V',
+         'Db2Instance': 'BB_DB2INSTANCE49_V',
+         'Db2InstanceConfigValue': 'BB_DB2INSTANCECONFIGVALUE42_V',
+         'Db2Module': 'BB_DB2MODULE40_V',
+         'Db2Schema': 'BB_DB2SCHEMA71_V',
+         'Db2Server': 'BB_DB2SERVER13_V',
+         'Db2ServerProcess': 'BB_DB2SERVERPROCESS72_V',
+         'Db2System': 'BB_DB2SYSTEM29_V',
+         'Db2SystemConfigValue': 'BB_DB2SYSTEMCONFIGVALUE80_V',
+         'Db2TableSpace': 'BB_DB2TABLESPACE76_V',
+         'DefaultAccessEntry': 'BB_DEFAULTACCESSENTRY33_V',
+         'DefinedUsing': 'BB_DEFINEDUSING68_V',
+         'DefinitiveSoftwareLibrary': 'BB_DEFINITIVESOFTWARELIBR19_V',
+         'Dependency': 'BB_DEPENDENCY11_V',
+         'DependsOn': 'BB_DEPENDSON65_V',
+         'DeployedOn': 'BB_DEPLOYEDON30_V',
+         'DeployedTo': 'BB_DEPLOYEDTO74_V',
+         'DeployedUsing': 'BB_DEPLOYEDUSING47_V',
+         'Deployment': 'BB_DEPLOYMENT10_V',
+         'DerivedFrom': 'BB_DERIVEDFROM94_V',
+         'DesktopComposite': 'BB_DESKTOPCOMPOSITE74_V',
+         'Directory': 'BB_DIRECTORY93_V',
+         'DirectoryAssistance': 'BB_DIRECTORYASSISTANCE16_V',
+         'DirectoryCataloger': 'BB_DIRECTORYCATALOGER50_V',
+         'DirectoryInfo': 'BB_DIRECTORYINFO18_V',
+         'DiscoveryProfile': 'BB_DISCOVERYPROFILE26_V',
+         'DiscoveryRun': 'BB_DISCOVERYRUN27_V',
+         'DiskDrive': 'BB_DISKDRIVE43_V',
+         'DiskPartition': 'BB_DISKPARTITION3_V',
+         'DisplayNameRule': 'BB_DISPLAYNAMERULE53_V',
+         'Document': 'BB_DOCUMENT15_V',
+         'DomainCatalog': 'BB_DOMAINCATALOG72_V',
+         'DominoApplication': 'BB_DOMINOAPPLICATION49_V',
+         'DominoCluster': 'BB_DOMINOCLUSTER53_V',
+         'DominoConnection': 'BB_DOMINOCONNECTION55_V',
+         'DominoDatabase': 'BB_DOMINODATABASE80_V',
+         'DominoDomain': 'BB_DOMINODOMAIN69_V',
+         'DominoIIOPServer': 'BB_DOMINOIIOPSERVER13_V',
+         'DominoLibrary': 'BB_DOMINOLIBRARY2_V',
+         'DominoNamingContext': 'BB_DOMINONAMINGCONTEXT38_V',
+         'DominoReplicas': 'BB_DOMINOREPLICAS0_V',
+         'DominoSecurity': 'BB_DOMINOSECURITY55_V',
+         'DominoServer': 'BB_DOMINOSERVER40_V',
+         'DominoTransactionLogging': 'BB_DOMINOTRANSACTIONLOGGI42_V',
+         'DonatedTo': 'BB_DONATEDTO77_V',
+         'Dos': 'BB_DOS16_V',
+         'DosUnitaryComputerSystem': 'BB_DOSUNITARYCOMPUTERSYST74_V',
+         'DrawsFrom': 'BB_DRAWSFROM60_V',
+         'DynamicSystemDomain': 'BB_DYNAMICSYSTEMDOMAIN38_V',
+         'EJB': 'BB_EJB55_V',
+         'EJBContainer': 'BB_EJBCONTAINER96_V',
+         'EJBModule': 'BB_EJBMODULE75_V',
+         'EdgeTransport': 'BB_EDGETRANSPORT35_V',
+         'ElectricityMetering': 'BB_ELECTRICITYMETERING61_V',
+         'EmbeddedTomcatWebContainer': 'BB_EMBEDDEDTOMCATWEBCONTA54_V',
+         'Engine': 'BB_ENGINE21_V',
+         'Ensemble': 'BB_ENSEMBLE3_V',
+         'EntityBean': 'BB_ENTITYBEAN57_V',
+         'Enumeration': 'BB_ENUMERATION7_V',
+         'EnumerationType': 'BB_ENUMERATIONTYPE59_V',
+         'EnumerationValue': 'BB_ENUMERATIONVALUE22_V',
+         'Evaluates': 'BB_EVALUATES23_V',
+         'ExcelServer': 'BB_EXCELSERVER73_V',
+         'Exchange2007Group': 'BB_EXCHANGE2007GROUP0_V',
+         'ExchangeAdministrativeGroup': 'BB_EXCHANGEADMINISTRATIVE31_V',
+         'ExchangeConnector': 'BB_EXCHANGECONNECTOR25_V',
+         'ExchangeDSAccessDomainController': 'BB_EXCHANGEDSACCESSDOMAIN5_V',
+         'ExchangeFolderTree': 'BB_EXCHANGEFOLDERTREE58_V',
+         'ExchangeJournalRule': 'BB_EXCHANGEJOURNALRULE55_V',
+         'ExchangeLink': 'BB_EXCHANGELINK4_V',
+         'ExchangeMailbox': 'BB_EXCHANGEMAILBOX78_V',
+         'ExchangeMailboxStore': 'BB_EXCHANGEMAILBOXSTORE43_V',
+         'ExchangeMessageClassification': 'BB_EXCHANGEMESSAGECLASSIF83_V',
+         'ExchangeProtocol': 'BB_EXCHANGEPROTOCOL78_V',
+         'ExchangeProtocolVirtualServer': 'BB_EXCHANGEPROTOCOLVIRTUA0_V',
+         'ExchangePublicFolder': 'BB_EXCHANGEPUBLICFOLDER45_V',
+         'ExchangePublicFolderStore': 'BB_EXCHANGEPUBLICFOLDERST20_V',
+         'ExchangeQueue': 'BB_EXCHANGEQUEUE27_V',
+         'ExchangeRoutingGroup': 'BB_EXCHANGEROUTINGGROUP87_V',
+         'ExchangeScheduleInterval': 'BB_EXCHANGESCHEDULEINTERV18_V',
+         'ExchangeServer': 'BB_EXCHANGESERVER65_V',
+         'ExchangeServerRole': 'BB_EXCHANGESERVERROLE33_V',
+         'ExchangeStorageGroup': 'BB_EXCHANGESTORAGEGROUP94_V',
+         'ExchangeVirtualDirectory': 'BB_EXCHANGEVIRTUALDIRECTO44_V',
+         'ExecutableFile': 'BB_EXECUTABLEFILE40_V',
+         'Exports': 'BB_EXPORTS74_V',
+         'Exposes': 'BB_EXPOSES70_V',
+         'FCDirectorFunction': 'BB_FCDIRECTORFUNCTION23_V',
+         'FCPort': 'BB_FCPORT20_V',
+         'FCSwitch': 'BB_FCSWITCH83_V',
+         'FCSwitchFunction': 'BB_FCSWITCHFUNCTION53_V',
+         'FCVolume': 'BB_FCVOLUME55_V',
+         'Fabric': 'BB_FABRIC27_V',
+         'Fan': 'BB_FAN60_V',
+         'FarmMemberService': 'BB_FARMMEMBERSERVICE30_V',
+         'Federates': 'BB_FEDERATES86_V',
+         'Feeds': 'BB_FEEDS4_V',
+         'FileCapture': 'BB_FILECAPTURE26_V',
+         'FileLocation': 'BB_FILELOCATION75_V',
+         'FileSystem': 'BB_FILESYSTEM71_V',
+         'FileSystemContent': 'BB_FILESYSTEMCONTENT8_V',
+         'FileSystemExport': 'BB_FILESYSTEMEXPORT7_V',
+         'FileSystemService': 'BB_FILESYSTEMSERVICE36_V',
+         'Filter': 'BB_FILTER60_V',
+         'FilterPreference': 'BB_FILTERPREFERENCE74_V',
+         'FilterSet': 'BB_FILTERSET2_V',
+         'Firewall': 'BB_FIREWALL30_V',
+         'FluidMetering': 'BB_FLUIDMETERING98_V',
+         'ForwarderConfiguration': 'BB_FORWARDERCONFIGURATION35_V',
+         'ForwardsVia': 'BB_FORWARDSVIA21_V',
+         'Fqdn': 'BB_FQDN31_V',
+         'FreeBSD': 'BB_FREEBSD34_V',
+         'FreeBSDUnitaryComputerSystem': 'BB_FREEBSDUNITARYCOMPUTER92_V',
+         'FrontEndWebServer': 'BB_FRONTENDWEBSERVER22_V',
+         'FuelCell': 'BB_FUELCELL17_V',
+         'Fulfills': 'BB_FULFILLS32_V',
+         'Function': 'BB_FUNCTION34_V',
+         'FunctionalGroup': 'BB_FUNCTIONALGROUP74_V',
+         'Gauges': 'BB_GAUGES61_V',
+         'Generates': 'BB_GENERATES31_V',
+         'Generator': 'BB_GENERATOR1_V',
+         'GeneratorSet': 'BB_GENERATORSET57_V',
+         'GenericAgentConfiguration': 'BB_GENERICAGENTCONFIGURAT77_V',
+         'GenericAppServer': 'BB_GENERICAPPSERVER99_V',
+         'GenericAppServerCluster': 'BB_GENERICAPPSERVERCLUSTER25_V',
+         'GenericComputerSystem': 'BB_GENERICCOMPUTERSYSTEM41_V',
+         'GenericDatabaseServer': 'BB_GENERICDATABASESERVER95_V',
+         'GenericFirewall': 'BB_GENERICFIREWALL59_V',
+         'GenericJ2EEServer': 'BB_GENERICJ2EESERVER74_V',
+         'GenericLoadBalancer': 'BB_GENERICLOADBALANCER53_V',
+         'GenericRouter': 'BB_GENERICROUTER46_V',
+         'GenericServerProcess': 'BB_GENERICSERVERPROCESS25_V',
+         'GenericService': 'BB_GENERICSERVICE36_V',
+         'GenericSwitch': 'BB_GENERICSWITCH1_V',
+         'GenericWebServer': 'BB_GENERICWEBSERVER52_V',
+         'Geography': 'BB_GEOGRAPHY37_V',
+         'GivesDetails': 'BB_GIVESDETAILS57_V',
+         'GroupMemberOf': 'BB_GROUPMEMBEROF37_V',
+         'GroupingPattern': 'BB_GROUPINGPATTERN23_V',
+         'HACMPAppResource': 'BB_HACMPAPPRESOURCE69_V',
+         'HACMPCluster': 'BB_HACMPCLUSTER68_V',
+         'HACMPClusterHeartbeatNetwork': 'BB_HACMPCLUSTERHEARTBEATN30_V',
+         'HACMPClusterHeartbeatNetworkElement': 'BB_HACMPCLUSTERHEARTBEATN22_V',
+         'HACMPClusterManager': 'BB_HACMPCLUSTERMANAGER47_V',
+         'HACMPLocalAppResource': 'BB_HACMPLOCALAPPRESOURCE86_V',
+         'HACMPLocalResourceGroup': 'BB_HACMPLOCALRESOURCEGROUP24_V',
+         'HACMPNode': 'BB_HACMPNODE20_V',
+         'HACMPResourceGroup': 'BB_HACMPRESOURCEGROUP83_V',
+         'HAIL': 'BB_HAIL7_V',
+         'HAILSingletonController': 'BB_HAILSINGLETONCONTROLLER72_V',
+         'HAJNDI': 'BB_HAJNDI27_V',
+         'HASessionState': 'BB_HASESSIONSTATE25_V',
+         'HISConnection': 'BB_HISCONNECTION74_V',
+         'HISDomain': 'BB_HISDOMAIN16_V',
+         'HISLUA': 'BB_HISLUA12_V',
+         'HISLUDisplay': 'BB_HISLUDISPLAY85_V',
+         'HISLUPrint': 'BB_HISLUPRINT8_V',
+         'HISService': 'BB_HISSERVICE21_V',
+         'HMC': 'BB_HMC16_V',
+         'HTTPConnector': 'BB_HTTPCONNECTOR82_V',
+         'HTTPFilterSpecialtyServer': 'BB_HTTPFILTERSPECIALTYSER68_V',
+         'HVACEquipment': 'BB_HVACEQUIPMENT97_V',
+         'HardwareComposite': 'BB_HARDWARECOMPOSITE32_V',
+         'HiRDBBackEndServer': 'BB_HIRDBBACKENDSERVER37_V',
+         'HiRDBDictionaryServer': 'BB_HIRDBDICTIONARYSERVER91_V',
+         'HiRDBFileSystemArea': 'BB_HIRDBFILESYSTEMAREA94_V',
+         'HiRDBFrontEndServer': 'BB_HIRDBFRONTENDSERVER13_V',
+         'HiRDBGlobalBuffer': 'BB_HIRDBGLOBALBUFFER35_V',
+         'HiRDBProcessingServer': 'BB_HIRDBPROCESSINGSERVER92_V',
+         'HiRDBRdArea': 'BB_HIRDBRDAREA1_V',
+         'HiRDBServer': 'BB_HIRDBSERVER93_V',
+         'HiRDBSingleDatabaseServer': 'BB_HIRDBSINGLEDATABASESER80_V',
+         'HiRDBStatusFile': 'BB_HIRDBSTATUSFILE96_V',
+         'HiRDBSyncPointDumpFile': 'BB_HIRDBSYNCPOINTDUMPFILE27_V',
+         'HiRDBSystem': 'BB_HIRDBSYSTEM77_V',
+         'HiRDBSystemLogFile': 'BB_HIRDBSYSTEMLOGFILE63_V',
+         'HiRDBSystemManager': 'BB_HIRDBSYSTEMMANAGER8_V',
+         'HiRDBTable': 'BB_HIRDBTABLE8_V',
+         'HiRDBUnit': 'BB_HIRDBUNIT46_V',
+         'HomogeneousCollection': 'BB_HOMOGENEOUSCOLLECTION55_V',
+         'HostBusAdaptor': 'BB_HOSTBUSADAPTOR5_V',
+         'HostConstraint': 'BB_HOSTCONSTRAINT77_V',
+         'HostInstance': 'BB_HOSTINSTANCE9_V',
+         'HostIntegrationServer': 'BB_HOSTINTEGRATIONSERVER43_V',
+         'HostedBy': 'BB_HOSTEDBY19_V',
+         'HostedCollection': 'BB_HOSTEDCOLLECTION58_V',
+         'HostedDependency': 'BB_HOSTEDDEPENDENCY85_V',
+         'HpNonStop': 'BB_HPNONSTOP74_V',
+         'HpNonStopComputerSystem': 'BB_HPNONSTOPCOMPUTERSYSTEM88_V',
+         'HpUx': 'BB_HPUX92_V',
+         'HpUxKernelDriver': 'BB_HPUXKERNELDRIVER91_V',
+         'HpUxUnitaryComputerSystem': 'BB_HPUXUNITARYCOMPUTERSYS82_V',
+         'HubTransport': 'BB_HUBTRANSPORT19_V',
+         'HyperV': 'BB_HYPERV12_V',
+         'Hypervisor': 'BB_HYPERVISOR70_V',
+         'I5GroupProfile': 'BB_I5GROUPPROFILE22_V',
+         'I5OSDiskPool': 'BB_I5OSDISKPOOL9_V',
+         'I5OSDiskUnit': 'BB_I5OSDISKUNIT25_V',
+         'I5OSExtent': 'BB_I5OSEXTENT38_V',
+         'I5OSPTF': 'BB_I5OSPTF86_V',
+         'I5OSPTFGroup': 'BB_I5OSPTFGROUP61_V',
+         'I5OSSoftwareComponent': 'BB_I5OSSOFTWARECOMPONENT26_V',
+         'I5OperatingSystem': 'BB_I5OPERATINGSYSTEM60_V',
+         'I5Profile': 'BB_I5PROFILE63_V',
+         'I5UserProfile': 'BB_I5USERPROFILE22_V',
+         'IBMHTTPServer': 'BB_IBMHTTPSERVER51_V',
+         'ICF': 'BB_ICF90_V',
+         'IDSAlias': 'BB_IDSALIAS32_V',
+         'IDSBufferPool': 'BB_IDSBUFFERPOOL4_V',
+         'IDSChunk': 'BB_IDSCHUNK27_V',
+         'IDSConfigValue': 'BB_IDSCONFIGVALUE5_V',
+         'IDSDatabase': 'BB_IDSDATABASE5_V',
+         'IDSInstance': 'BB_IDSINSTANCE3_V',
+         'IDSSegment': 'BB_IDSSEGMENT27_V',
+         'IDSServerProcess': 'BB_IDSSERVERPROCESS88_V',
+         'IDSSpace': 'BB_IDSSPACE30_V',
+         'IDSStartupEnvironmentVar': 'BB_IDSSTARTUPENVIRONMENTV25_V',
+         'IDSSystem': 'BB_IDSSYSTEM93_V',
+         'IFL': 'BB_IFL91_V',
+         'IIOPConfig': 'BB_IIOPCONFIG24_V',
+         'IIsModule': 'BB_IISMODULE16_V',
+         'IIsParameter': 'BB_IISPARAMETER3_V',
+         'IIsWebServer': 'BB_IISWEBSERVER97_V',
+         'IIsWebService': 'BB_IISWEBSERVICE35_V',
+         'IIsWebVirtualDir': 'BB_IISWEBVIRTUALDIR50_V',
+         'IMAPConfig': 'BB_IMAPCONFIG46_V',
+         'IMSDatabase': 'BB_IMSDATABASE32_V',
+         'IMSProgram': 'BB_IMSPROGRAM57_V',
+         'IMSSubsystem': 'BB_IMSSUBSYSTEM30_V',
+         'IMSSysplexGroup': 'BB_IMSSYSPLEXGROUP68_V',
+         'IMSTransaction': 'BB_IMSTRANSACTION21_V',
+         'IPDLCService': 'BB_IPDLCSERVICE93_V',
+         'IPSOUnitaryComputerSystem': 'BB_IPSOUNITARYCOMPUTERSYS54_V',
+         'IPlanetJSP': 'BB_IPLANETJSP67_V',
+         'IPlanetJVMSettings': 'BB_IPLANETJVMSETTINGS28_V',
+         'IPlanetProxyServer': 'BB_IPLANETPROXYSERVER99_V',
+         'IPlanetSSLSettings': 'BB_IPLANETSSLSETTINGS3_V',
+         'IPlanetServer': 'BB_IPLANETSERVER29_V',
+         'IPlanetServlet': 'BB_IPLANETSERVLET5_V',
+         'IPlanetVirtualHost': 'BB_IPLANETVIRTUALHOST37_V',
+         'IPlanetWebContainer': 'BB_IPLANETWEBCONTAINER83_V',
+         'ITSystem': 'BB_ITSYSTEM72_V',
+         'IVM': 'BB_IVM66_V',
+         'Implements': 'BB_IMPLEMENTS25_V',
+         'ImplicitCollection': 'BB_IMPLICITCOLLECTION65_V',
+         'Imports': 'BB_IMPORTS41_V',
+         'InContextOf': 'BB_INCONTEXTOF80_V',
+         'InRowCoolingUnit': 'BB_INROWCOOLINGUNIT19_V',
+         'IncidentRecordProxy': 'BB_INCIDENTRECORDPROXY77_V',
+         'IncompatibleWith': 'BB_INCOMPATIBLEWITH76_V',
+         'IndexServer': 'BB_INDEXSERVER46_V',
+         'InfrastructureApplicationComposite': 'BB_INFRASTRUCTUREAPPLICAT39_V',
+         'InstalledFrom': 'BB_INSTALLEDFROM23_V',
+         'InstalledOn': 'BB_INSTALLEDON24_V',
+         'InstanceViewConstruct': 'BB_INSTANCEVIEWCONSTRUCT55_V',
+         'Interface': 'BB_INTERFACE93_V',
+         'InternetClusterManager': 'BB_INTERNETCLUSTERMANAGER97_V',
+         'InvokedThrough': 'BB_INVOKEDTHROUGH46_V',
+         'IpAddress': 'BB_IPADDRESS73_V',
+         'IpAddressScope': 'BB_IPADDRESSSCOPE95_V',
+         'IpDependency': 'BB_IPDEPENDENCY99_V',
+         'IpInterface': 'BB_IPINTERFACE96_V',
+         'IpInterfacePropagatorConfiguration': 'BB_IPINTERFACEPROPAGATORC92_V',
+         'IpNetwork': 'BB_IPNETWORK1_V',
+         'IpNetworkPropagatorConfiguration': 'BB_IPNETWORKPROPAGATORCON17_V',
+         'IpNetworkScope': 'BB_IPNETWORKSCOPE37_V',
+         'IpNetworkViewConstruct': 'BB_IPNETWORKVIEWCONSTRUCT41_V',
+         'IpRangeScope': 'BB_IPRANGESCOPE24_V',
+         'IpRangeViewConstruct': 'BB_IPRANGEVIEWCONSTRUCT90_V',
+         'IpRoute': 'BB_IPROUTE52_V',
+         'IpStorageSwitchFunction': 'BB_IPSTORAGESWITCHFUNCTION18_V',
+         'IpV4Address': 'BB_IPV4ADDRESS65_V',
+         'IpV4Network': 'BB_IPV4NETWORK57_V',
+         'IpV4Router': 'BB_IPV4ROUTER60_V',
+         'IpV6Address': 'BB_IPV6ADDRESS39_V',
+         'IpV6Network': 'BB_IPV6NETWORK83_V',
+         'IpV6Router': 'BB_IPV6ROUTER74_V',
+         'IsActuallyCausedBy': 'BB_ISACTUALLYCAUSEDBY56_V',
+         'IsCausedBy': 'BB_ISCAUSEDBY77_V',
+         'IsProbablyCausedBy': 'BB_ISPROBABLYCAUSEDBY76_V',
+         'IsReportedToBeCausedBy': 'BB_ISREPORTEDTOBECAUSEDBY38_V',
+         'J2EEApplication': 'BB_J2EEAPPLICATION36_V',
+         'J2EEComponent': 'BB_J2EECOMPONENT17_V',
+         'J2EEDeployedObject': 'BB_J2EEDEPLOYEDOBJECT5_V',
+         'J2EEDomain': 'BB_J2EEDOMAIN12_V',
+         'J2EEModule': 'BB_J2EEMODULE68_V',
+         'J2EEResource': 'BB_J2EERESOURCE14_V',
+         'J2EEServer': 'BB_J2EESERVER41_V',
+         'J2EEWebContainer': 'BB_J2EEWEBCONTAINER71_V',
+         'JBossCluster': 'BB_JBOSSCLUSTER78_V',
+         'JBossConnectorModule': 'BB_JBOSSCONNECTORMODULE91_V',
+         'JBossDestination': 'BB_JBOSSDESTINATION54_V',
+         'JBossDestinationManager': 'BB_JBOSSDESTINATIONMANAGER93_V',
+         'JBossDomain': 'BB_JBOSSDOMAIN4_V',
+         'JBossEJB': 'BB_JBOSSEJB33_V',
+         'JBossEJBModule': 'BB_JBOSSEJBMODULE19_V',
+         'JBossFilePM': 'BB_JBOSSFILEPM25_V',
+         'JBossHTTPInvocationLayer': 'BB_JBOSSHTTPINVOCATIONLAY51_V',
+         'JBossHost': 'BB_JBOSSHOST72_V',
+         'JBossIL': 'BB_JBOSSIL57_V',
+         'JBossInvocationLayer': 'BB_JBOSSINVOCATIONLAYER59_V',
+         'JBossJ2EEApplication': 'BB_JBOSSJ2EEAPPLICATION32_V',
+         'JBossJDBC2PM': 'BB_JBOSSJDBC2PM0_V',
+         'JBossJMSServer': 'BB_JBOSSJMSSERVER83_V',
+         'JBossJNDIService': 'BB_JBOSSJNDISERVICE64_V',
+         'JBossJVMInvocationLayer': 'BB_JBOSSJVMINVOCATIONLAYER16_V',
+         'JBossMailService': 'BB_JBOSSMAILSERVICE26_V',
+         'JBossManagedConnectionFactory': 'BB_JBOSSMANAGEDCONNECTION39_V',
+         'JBossManagedConnectionPool': 'BB_JBOSSMANAGEDCONNECTION21_V',
+         'JBossMessageCache': 'BB_JBOSSMESSAGECACHE3_V',
+         'JBossOIL': 'BB_JBOSSOIL22_V',
+         'JBossPersistenceManager': 'BB_JBOSSPERSISTENCEMANAGER82_V',
+         'JBossRMIInvocationLayer': 'BB_JBOSSRMIINVOCATIONLAYER21_V',
+         'JBossResourceAdaptor': 'BB_JBOSSRESOURCEADAPTOR5_V',
+         'JBossRollingLoggedPM': 'BB_JBOSSROLLINGLOGGEDPM24_V',
+         'JBossServer': 'BB_JBOSSSERVER75_V',
+         'JBossServlets': 'BB_JBOSSSERVLETS6_V',
+         'JBossTransactionCM': 'BB_JBOSSTRANSACTIONCM36_V',
+         'JBossWebModule': 'BB_JBOSSWEBMODULE76_V',
+         'JCAConnection': 'BB_JCACONNECTION2_V',
+         'JCAConnectionFactory': 'BB_JCACONNECTIONFACTORY40_V',
+         'JCAConnectionPool': 'BB_JCACONNECTIONPOOL58_V',
+         'JCAManagedConnectionFactory': 'BB_JCAMANAGEDCONNECTIONFA87_V',
+         'JDBC': 'BB_JDBC11_V',
+         'JDBCConnection': 'BB_JDBCCONNECTION13_V',
+         'JDBCConnectionPool': 'BB_JDBCCONNECTIONPOOL5_V',
+         'JDBCDataSource': 'BB_JDBCDATASOURCE36_V',
+         'JDBCDriver': 'BB_JDBCDRIVER89_V',
+         'JMS': 'BB_JMS40_V',
+         'JMSConnection': 'BB_JMSCONNECTION94_V',
+         'JMSEndpoint': 'BB_JMSENDPOINT93_V',
+         'JMSSession': 'BB_JMSSESSION86_V',
+         'JSP': 'BB_JSP57_V',
+         'JVM': 'BB_JVM1_V',
+         'JVMContainer': 'BB_JVMCONTAINER42_V',
+         'JavaMail': 'BB_JAVAMAIL21_V',
+         'JavaProcessPool': 'BB_JAVAPROCESSPOOL39_V',
+         'JavaRuntimeProcess': 'BB_JAVARUNTIMEPROCESS87_V',
+         'JavaServerProcess': 'BB_JAVASERVERPROCESS68_V',
+         'JettyHTTPConnector': 'BB_JETTYHTTPCONNECTOR94_V',
+         'JettyVirtualHosts': 'BB_JETTYVIRTUALHOSTS83_V',
+         'JettyWebContainer': 'BB_JETTYWEBCONTAINER40_V',
+         'JobServer': 'BB_JOBSERVER55_V',
+         'KVM': 'BB_KVM40_V',
+         'KernelDriver': 'BB_KERNELDRIVER67_V',
+         'L2Interface': 'BB_L2INTERFACE41_V',
+         'LDAPConfig': 'BB_LDAPCONFIG18_V',
+         'LDAPSAP': 'BB_LDAPSAP43_V',
+         'LDAPService': 'BB_LDAPSERVICE60_V',
+         'LPAR': 'BB_LPAR49_V',
+         'LU': 'BB_LU49_V',
+         'LVMService': 'BB_LVMSERVICE26_V',
+         'LegacySystem': 'BB_LEGACYSYSTEM50_V',
+         'LinkService': 'BB_LINKSERVICE45_V',
+         'Linux': 'BB_LINUX4_V',
+         'LinuxKernelDriver': 'BB_LINUXKERNELDRIVER11_V',
+         'LinuxRPM': 'BB_LINUXRPM73_V',
+         'LinuxUnitaryComputerSystem': 'BB_LINUXUNITARYCOMPUTERSY26_V',
+         'LoadBalancer': 'BB_LOADBALANCER93_V',
+         'LoadBalances': 'BB_LOADBALANCES98_V',
+         'LocalAccessResolveEntry': 'BB_LOCALACCESSRESOLVEENTRY86_V',
+         'LocalFileSystem': 'BB_LOCALFILESYSTEM80_V',
+         'LocatedAt': 'BB_LOCATEDAT20_V',
+         'Locates': 'BB_LOCATES0_V',
+         'LogicalConnection': 'BB_LOGICALCONNECTION89_V',
+         'LogicalContent': 'BB_LOGICALCONTENT42_V',
+         'LoginProfile': 'BB_LOGINPROFILE96_V',
+         'LotusConfig': 'BB_LOTUSCONFIG40_V',
+         'MBAggregationConfigurableService': 'BB_MBAGGREGATIONCONFIGURA44_V',
+         'MBBarFile': 'BB_MBBARFILE31_V',
+         'MBBroker': 'BB_MBBROKER29_V',
+         'MBBrokerProfile': 'BB_MBBROKERPROFILE86_V',
+         'MBBrokerSecurity': 'BB_MBBROKERSECURITY83_V',
+         'MBCICSConnectionConfigurableService': 'BB_MBCICSCONNECTIONCONFIG78_V',
+         'MBCORBAConfigurableService': 'BB_MBCORBACONFIGURABLESER35_V',
+         'MBCollectorConfigurableService': 'BB_MBCOLLECTORCONFIGURABL91_V',
+         'MBConfigurableService': 'BB_MBCONFIGURABLESERVICE74_V',
+         'MBEISProvidersConfigurableService': 'BB_MBEISPROVIDERSCONFIGUR91_V',
+         'MBEmailServerConfigurableService': 'BB_MBEMAILSERVERCONFIGURA93_V',
+         'MBExecutionGroup': 'BB_MBEXECUTIONGROUP47_V',
+         'MBFtpServerConfigurableService': 'BB_MBFTPSERVERCONFIGURABL67_V',
+         'MBHTTPConnectorProperty': 'BB_MBHTTPCONNECTORPROPERTY64_V',
+         'MBHTTPListenerProperties': 'BB_MBHTTPLISTENERPROPERTI79_V',
+         'MBHTTPListenerProperty': 'BB_MBHTTPLISTENERPROPERTY53_V',
+         'MBHTTPSConnectorProperty': 'BB_MBHTTPSCONNECTORPROPER75_V',
+         'MBIMSConnectConfigurableService': 'BB_MBIMSCONNECTCONFIGURAB55_V',
+         'MBJDBCProvidersConfigurableService': 'BB_MBJDBCPROVIDERSCONFIGU49_V',
+         'MBJDEdwardsConnectionConfigurableService': 'BB_MBJDEDWARDSCONNECTIONC50_V',
+         'MBJMSProvidersConfigurableService': 'BB_MBJMSPROVIDERSCONFIGUR84_V',
+         'MBJavaClassLoaderConfigurableService': 'BB_MBJAVACLASSLOADERCONFI85_V',
+         'MBMessageFlow': 'BB_MBMESSAGEFLOW45_V',
+         'MBMessageFlowNode': 'BB_MBMESSAGEFLOWNODE77_V',
+         'MBMonitoringProfilesConfigurableService': 'BB_MBMONITORINGPROFILESCO20_V',
+         'MBPeopleSoftConnectionConfigurableService': 'BB_MBPEOPLESOFTCONNECTION33_V',
+         'MBPolicySetBindingsConfigurableService': 'BB_MBPOLICYSETBINDINGSCON64_V',
+         'MBPolicySetsConfigurableService': 'BB_MBPOLICYSETSCONFIGURAB97_V',
+         'MBProperty': 'BB_MBPROPERTY93_V',
+         'MBPropertyEntity': 'BB_MBPROPERTYENTITY26_V',
+         'MBResequenceConfigurableService': 'BB_MBRESEQUENCECONFIGURAB22_V',
+         'MBSAPConnectionConfigurableService': 'BB_MBSAPCONNECTIONCONFIGU30_V',
+         'MBSMTPConfigurableService': 'BB_MBSMTPCONFIGURABLESERV68_V',
+         'MBSecurityProfilesConfigurableService': 'BB_MBSECURITYPROFILESCONF72_V',
+         'MBServiceRegistriesConfigurableService': 'BB_MBSERVICEREGISTRIESCON70_V',
+         'MBSiebelConnectionConfigurableService': 'BB_MBSIEBELCONNECTIONCONF54_V',
+         'MBTCPIPClientConfigurableService': 'BB_MBTCPIPCLIENTCONFIGURA31_V',
+         'MBTCPIPServerConfigurableService': 'BB_MBTCPIPSERVERCONFIGURA89_V',
+         'MBTimerConfigurableService': 'BB_MBTIMERCONFIGURABLESER61_V',
+         'MBUserDefinedConfigurableService': 'BB_MBUSERDEFINEDCONFIGURA4_V',
+         'MQAliasQueue': 'BB_MQALIASQUEUE71_V',
+         'MQApiExit': 'BB_MQAPIEXIT46_V',
+         'MQApiExitCommons': 'BB_MQAPIEXITCOMMONS34_V',
+         'MQApiExitLocal': 'BB_MQAPIEXITLOCAL5_V',
+         'MQApiExitTemplates': 'BB_MQAPIEXITTEMPLATES51_V',
+         'MQAuthInfo': 'BB_MQAUTHINFO28_V',
+         'MQBufferPool': 'BB_MQBUFFERPOOL74_V',
+         'MQChannel': 'BB_MQCHANNEL75_V',
+         'MQClientConnectionChannel': 'BB_MQCLIENTCONNECTIONCHAN56_V',
+         'MQCluster': 'BB_MQCLUSTER24_V',
+         'MQClusterReceiverChannel': 'BB_MQCLUSTERRECEIVERCHANN96_V',
+         'MQClusterSenderChannel': 'BB_MQCLUSTERSENDERCHANNEL6_V',
+         'MQInstallableService': 'BB_MQINSTALLABLESERVICE58_V',
+         'MQInstallation': 'BB_MQINSTALLATION80_V',
+         'MQLRule': 'BB_MQLRULE27_V',
+         'MQListener': 'BB_MQLISTENER86_V',
+         'MQLocalQueue': 'BB_MQLOCALQUEUE56_V',
+         'MQModelQueue': 'BB_MQMODELQUEUE98_V',
+         'MQNameList': 'BB_MQNAMELIST33_V',
+         'MQNetBIOSListener': 'BB_MQNETBIOSLISTENER58_V',
+         'MQPageSet': 'BB_MQPAGESET97_V',
+         'MQProcess': 'BB_MQPROCESS81_V',
+         'MQQueue': 'BB_MQQUEUE65_V',
+         'MQQueueManager': 'BB_MQQUEUEMANAGER82_V',
+         'MQQueueSharingGroup': 'BB_MQQUEUESHARINGGROUP34_V',
+         'MQReceiverChannel': 'BB_MQRECEIVERCHANNEL2_V',
+         'MQRemoteQueue': 'BB_MQREMOTEQUEUE85_V',
+         'MQRequesterChannel': 'BB_MQREQUESTERCHANNEL91_V',
+         'MQSNAListener': 'BB_MQSNALISTENER68_V',
+         'MQSPXListener': 'BB_MQSPXLISTENER69_V',
+         'MQSenderChannel': 'BB_MQSENDERCHANNEL40_V',
+         'MQServerChannel': 'BB_MQSERVERCHANNEL22_V',
+         'MQServerConnectionChannel': 'BB_MQSERVERCONNECTIONCHAN48_V',
+         'MQService': 'BB_MQSERVICE9_V',
+         'MQServiceComponent': 'BB_MQSERVICECOMPONENT10_V',
+         'MQStorageClass': 'BB_MQSTORAGECLASS75_V',
+         'MQSubsystem': 'BB_MQSUBSYSTEM19_V',
+         'MQTCPListener': 'BB_MQTCPLISTENER5_V',
+         'MSSAccessInfo': 'BB_MSSACCESSINFO17_V',
+         'MSSObjectLink': 'BB_MSSOBJECTLINK46_V',
+         'MacOS': 'BB_MACOS18_V',
+         'MacOSKernelDriver': 'BB_MACOSKERNELDRIVER65_V',
+         'MailboxServer': 'BB_MAILBOXSERVER88_V',
+         'MainframeComposite': 'BB_MAINFRAMECOMPOSITE42_V',
+         'ManagedVia': 'BB_MANAGEDVIA28_V',
+         'Management': 'BB_MANAGEMENT19_V',
+         'ManagementSoftwareSystem': 'BB_MANAGEMENTSOFTWARESYST87_V',
+         'Manages': 'BB_MANAGES95_V',
+         'MapsTo': 'BB_MAPSTO9_V',
+         'MediaAccessDevice': 'BB_MEDIAACCESSDEVICE36_V',
+         'MeetingServer': 'BB_MEETINGSERVER77_V',
+         'MemberOf': 'BB_MEMBEROF62_V',
+         'Memory': 'BB_MEMORY55_V',
+         'MemoryResourcePool': 'BB_MEMORYRESOURCEPOOL41_V',
+         'MessageBox': 'BB_MESSAGEBOX65_V',
+         'MessageDrivenBean': 'BB_MESSAGEDRIVENBEAN67_V',
+         'Meter': 'BB_METER57_V',
+         'Metering': 'BB_METERING5_V',
+         'Mirrors': 'BB_MIRRORS65_V',
+         'ModuleCapture': 'BB_MODULECAPTURE34_V',
+         'ModuleDefinition': 'BB_MODULEDEFINITION43_V',
+         'ModuleMapping': 'BB_MODULEMAPPING30_V',
+         'Monitor': 'BB_MONITOR73_V',
+         'MonitorConfiguration': 'BB_MONITORCONFIGURATION20_V',
+         'Monitors': 'BB_MONITORS34_V',
+         'MpioPath': 'BB_MPIOPATH5_V',
+         'MsCluster': 'BB_MSCLUSTER86_V',
+         'MsClusterNode': 'BB_MSCLUSTERNODE76_V',
+         'MsClusterResource': 'BB_MSCLUSTERRESOURCE88_V',
+         'MsClusterResourceGroup': 'BB_MSCLUSTERRESOURCEGROUP99_V',
+         'MsClusterService': 'BB_MSCLUSTERSERVICE95_V',
+         'MySAPABAPApplicationServer': 'BB_MYSAPABAPAPPLICATIONSE18_V',
+         'MySAPCluster': 'BB_MYSAPCLUSTER55_V',
+         'MySAPClusterNode': 'BB_MYSAPCLUSTERNODE95_V',
+         'MySAPDb2Instance': 'BB_MYSAPDB2INSTANCE82_V',
+         'MySAPJ2EEEngineInstance': 'BB_MYSAPJ2EEENGINEINSTANCE52_V',
+         'MySAPJavaCentralSystem': 'BB_MYSAPJAVACENTRALSYSTEM79_V',
+         'MySAPOracleInstance': 'BB_MYSAPORACLEINSTANCE66_V',
+         'MySAPSqlServer': 'BB_MYSAPSQLSERVER86_V',
+         'NFSExport': 'BB_NFSEXPORT19_V',
+         'NFSFileSystem': 'BB_NFSFILESYSTEM32_V',
+         'NFSSAP': 'BB_NFSSAP21_V',
+         'NFSService': 'BB_NFSSERVICE64_V',
+         'NSAPIPlugin': 'BB_NSAPIPLUGIN27_V',
+         'NamingContext': 'BB_NAMINGCONTEXT69_V',
+         'NamingRule': 'BB_NAMINGRULE0_V',
+         'NamingRuleAttribute': 'BB_NAMINGRULEATTRIBUTE52_V',
+         'NetBIOSProtocolEndpoint': 'BB_NETBIOSPROTOCOLENDPOINT1_V',
+         'Netware': 'BB_NETWARE44_V',
+         'NetwareUnitaryComputerSystem': 'BB_NETWAREUNITARYCOMPUTER6_V',
+         'NetworkAdapterResourcePool': 'BB_NETWORKADAPTERRESOURCE69_V',
+         'NetworkConnection': 'BB_NETWORKCONNECTION38_V',
+         'NetworkInterface': 'BB_NETWORKINTERFACE53_V',
+         'NetworkLogicalConnection': 'BB_NETWORKLOGICALCONNECTI63_V',
+         'NetworkPipe': 'BB_NETWORKPIPE98_V',
+         'NetworkRedundancyConfiguration': 'BB_NETWORKREDUNDANCYCONFI13_V',
+         'NetworkService': 'BB_NETWORKSERVICE63_V',
+         'NetworkSystem': 'BB_NETWORKSYSTEM58_V',
+         'NetworkTopology': 'BB_NETWORKTOPOLOGY9_V',
+         'Networking': 'BB_NETWORKING58_V',
+         'Networks': 'BB_NETWORKS62_V',
+         'Node': 'BB_NODE84_V',
+         'NotesMail': 'BB_NOTESMAIL35_V',
+         'NpivViosVirtualAdapter': 'BB_NPIVVIOSVIRTUALADAPTER89_V',
+         'OABVirtualDirectory': 'BB_OABVIRTUALDIRECTORY71_V',
+         'ObjectAttribute': 'BB_OBJECTATTRIBUTE39_V',
+         'ObjectClass': 'BB_OBJECTCLASS95_V',
+         'ObjectID': 'BB_OBJECTID0_V',
+         'ObjectRediscoveryInfo': 'BB_OBJECTREDISCOVERYINFO5_V',
+         'Objective': 'BB_OBJECTIVE15_V',
+         'ObjectiveGroup': 'BB_OBJECTIVEGROUP6_V',
+         'Obsoletes': 'BB_OBSOLETES97_V',
+         'OccursBefore': 'BB_OCCURSBEFORE39_V',
+         'OpenVms': 'BB_OPENVMS44_V',
+         'OpenVmsFileSystem': 'BB_OPENVMSFILESYSTEM97_V',
+         'OpenVmsUnitaryComputerSystem': 'BB_OPENVMSUNITARYCOMPUTER38_V',
+         'OperatingSystem': 'BB_OPERATINGSYSTEM62_V',
+         'OperatingSystemMetric': 'BB_OPERATINGSYSTEMMETRIC77_V',
+         'Operation': 'BB_OPERATION97_V',
+         'OracleASM': 'BB_ORACLEASM55_V',
+         'OracleASMDisk': 'BB_ORACLEASMDISK76_V',
+         'OracleASMDiskGroup': 'BB_ORACLEASMDISKGROUP9_V',
+         'OracleASMInstance': 'BB_ORACLEASMINSTANCE8_V',
+         'OracleAppCluster': 'BB_ORACLEAPPCLUSTER94_V',
+         'OracleAppConnectorModule': 'BB_ORACLEAPPCONNECTORMODU3_V',
+         'OracleAppDomain': 'BB_ORACLEAPPDOMAIN56_V',
+         'OracleAppEJBModule': 'BB_ORACLEAPPEJBMODULE21_V',
+         'OracleAppHTTPServer': 'BB_ORACLEAPPHTTPSERVER41_V',
+         'OracleAppJ2EEApplication': 'BB_ORACLEAPPJ2EEAPPLICATI20_V',
+         'OracleAppJ2EEServer': 'BB_ORACLEAPPJ2EESERVER11_V',
+         'OracleAppJ2EEWebSite': 'BB_ORACLEAPPJ2EEWEBSITE55_V',
+         'OracleAppJDBCConnectionPool': 'BB_ORACLEAPPJDBCCONNECTIO63_V',
+         'OracleAppJDBCDataSource': 'BB_ORACLEAPPJDBCDATASOURCE88_V',
+         'OracleAppJDBCDriver': 'BB_ORACLEAPPJDBCDRIVER37_V',
+         'OracleAppJMSDestination': 'BB_ORACLEAPPJMSDESTINATION46_V',
+         'OracleAppJMSServer': 'BB_ORACLEAPPJMSSERVER73_V',
+         'OracleAppJSPContainer': 'BB_ORACLEAPPJSPCONTAINER70_V',
+         'OracleAppJTAResource': 'BB_ORACLEAPPJTARESOURCE35_V',
+         'OracleAppProcessManager': 'BB_ORACLEAPPPROCESSMANAGER10_V',
+         'OracleAppResourceAdapter': 'BB_ORACLEAPPRESOURCEADAPT27_V',
+         'OracleAppServlet': 'BB_ORACLEAPPSERVLET19_V',
+         'OracleAppWebModule': 'BB_ORACLEAPPWEBMODULE64_V',
+         'OracleBackgroundProcess': 'BB_ORACLEBACKGROUNDPROCESS55_V',
+         'OracleControlFile': 'BB_ORACLECONTROLFILE53_V',
+         'OracleDBLink': 'BB_ORACLEDBLINK68_V',
+         'OracleDataFile': 'BB_ORACLEDATAFILE62_V',
+         'OracleDatabase': 'BB_ORACLEDATABASE39_V',
+         'OracleInitValue': 'BB_ORACLEINITVALUE99_V',
+         'OracleInstance': 'BB_ORACLEINSTANCE41_V',
+         'OracleListener': 'BB_ORACLELISTENER80_V',
+         'OracleMetadata': 'BB_ORACLEMETADATA62_V',
+         'OracleModule': 'BB_ORACLEMODULE20_V',
+         'OracleParameter': 'BB_ORACLEPARAMETER89_V',
+         'OracleRAC': 'BB_ORACLERAC24_V',
+         'OracleRedoLogFile': 'BB_ORACLEREDOLOGFILE54_V',
+         'OracleSGAValue': 'BB_ORACLESGAVALUE28_V',
+         'OracleSchema': 'BB_ORACLESCHEMA89_V',
+         'OracleSchemaDetail': 'BB_ORACLESCHEMADETAIL54_V',
+         'OracleSchemaProps': 'BB_ORACLESCHEMAPROPS72_V',
+         'OracleServer': 'BB_ORACLESERVER47_V',
+         'OracleServerProcess': 'BB_ORACLESERVERPROCESS88_V',
+         'OracleTableSpace': 'BB_ORACLETABLESPACE72_V',
+         'Organization': 'BB_ORGANIZATION17_V',
+         'OrganizationalEntity': 'BB_ORGANIZATIONALENTITY53_V',
+         'OtherConfig': 'BB_OTHERCONFIG39_V',
+         'OtherDatabase': 'BB_OTHERDATABASE82_V',
+         'OtherPhysicalPackage': 'BB_OTHERPHYSICALPACKAGE26_V',
+         'OwaVirtualDirectory': 'BB_OWAVIRTUALDIRECTORY92_V',
+         'Owns': 'BB_OWNS78_V',
+         'POPConfig': 'BB_POPCONFIG26_V',
+         'PackageDefinition': 'BB_PACKAGEDEFINITION41_V',
+         'PageSpace': 'BB_PAGESPACE97_V',
+         'ParamMap': 'BB_PARAMMAP40_V',
+         'ParamTask': 'BB_PARAMTASK45_V',
+         'ParamTaskData': 'BB_PARAMTASKDATA52_V',
+         'ParamTaskDataInstance': 'BB_PARAMTASKDATAINSTANCE39_V',
+         'ParamTaskRuntime': 'BB_PARAMTASKRUNTIME93_V',
+         'ParamTaskRuntimeData': 'BB_PARAMTASKRUNTIMEDATA44_V',
+         'ParamValue': 'BB_PARAMVALUE57_V',
+         'Parameter': 'BB_PARAMETER77_V',
+         'Partner': 'BB_PARTNER40_V',
+         'Path': 'BB_PATH11_V',
+         'PatternConfiguration': 'BB_PATTERNCONFIGURATION56_V',
+         'PatternSchedule': 'BB_PATTERNSCHEDULE95_V',
+         'Performs': 'BB_PERFORMS39_V',
+         'Permission': 'BB_PERMISSION83_V',
+         'Person': 'BB_PERSON3_V',
+         'PersonRole': 'BB_PERSONROLE61_V',
+         'PhysicalComponent': 'BB_PHYSICALCOMPONENT64_V',
+         'PhysicalConnector': 'BB_PHYSICALCONNECTOR3_V',
+         'PhysicalEquipment': 'BB_PHYSICALEQUIPMENT48_V',
+         'PhysicalFrame': 'BB_PHYSICALFRAME3_V',
+         'PhysicalLink': 'BB_PHYSICALLINK12_V',
+         'PhysicalLocation': 'BB_PHYSICALLOCATION69_V',
+         'PhysicalMedia': 'BB_PHYSICALMEDIA81_V',
+         'PhysicalPackage': 'BB_PHYSICALPACKAGE60_V',
+         'PhysicalTape': 'BB_PHYSICALTAPE77_V',
+         'PhysicallyContains': 'BB_PHYSICALLYCONTAINS44_V',
+         'PluggedInto': 'BB_PLUGGEDINTO31_V',
+         'PowerBus': 'BB_POWERBUS91_V',
+         'PowerConnection': 'BB_POWERCONNECTION89_V',
+         'PowerDistributionUnit': 'BB_POWERDISTRIBUTIONUNIT99_V',
+         'PowerSource': 'BB_POWERSOURCE6_V',
+         'PowerSupply': 'BB_POWERSUPPLY69_V',
+         'Powers': 'BB_POWERS55_V',
+         'PowersAuxiliarly': 'BB_POWERSAUXILIARLY3_V',
+         'Preference': 'BB_PREFERENCE66_V',
+         'PrintService': 'BB_PRINTSERVICE18_V',
+         'Printer': 'BB_PRINTER64_V',
+         'PrinterQueue': 'BB_PRINTERQUEUE89_V',
+         'PrivateKeyFile': 'BB_PRIVATEKEYFILE58_V',
+         'Probe': 'BB_PROBE18_V',
+         'ProbeScript': 'BB_PROBESCRIPT22_V',
+         'ProbeTransaction': 'BB_PROBETRANSACTION89_V',
+         'ProcessContainer': 'BB_PROCESSCONTAINER52_V',
+         'ProcessFileSystemMapping': 'BB_PROCESSFILESYSTEMMAPPI74_V',
+         'ProcessPool': 'BB_PROCESSPOOL39_V',
+         'ProfileAccessEntry': 'BB_PROFILEACCESSENTRY29_V',
+         'ProjectServer': 'BB_PROJECTSERVER15_V',
+         'PropagatorConfiguration': 'BB_PROPAGATORCONFIGURATION32_V',
+         'Property': 'BB_PROPERTY82_V',
+         'ProtocolController': 'BB_PROTOCOLCONTROLLER50_V',
+         'ProtocolEndpoint': 'BB_PROTOCOLENDPOINT13_V',
+         'ProvidedBy': 'BB_PROVIDEDBY89_V',
+         'Provides': 'BB_PROVIDES61_V',
+         'Purpose': 'BB_PURPOSE98_V',
+         'QueryServer': 'BB_QUERYSERVER24_V',
+         'RFCProxy': 'BB_RFCPROXY95_V',
+         'RMI_IIOP': 'BB_RMI_IIOP78_V',
+         'Rack': 'BB_RACK66_V',
+         'RackCoolingUnit': 'BB_RACKCOOLINGUNIT79_V',
+         'RealServer': 'BB_REALSERVER76_V',
+         'RealServerGroup': 'BB_REALSERVERGROUP91_V',
+         'Realizes': 'BB_REALIZES34_V',
+         'RealizesExtent': 'BB_REALIZESEXTENT57_V',
+         'RearDoorHeatExchanger': 'BB_REARDOORHEATEXCHANGER6_V',
+         'ReceiveConnector': 'BB_RECEIVECONNECTOR91_V',
+         'Rejects': 'BB_REJECTS81_V',
+         'Relates': 'BB_RELATES31_V',
+         'Relationship': 'BB_RELATIONSHIP26_V',
+         'RelationshipType': 'BB_RELATIONSHIPTYPE78_V',
+         'ReleaseRecordProxy': 'BB_RELEASERECORDPROXY70_V',
+         'RemoteDebugManager': 'BB_REMOTEDEBUGMANAGER17_V',
+         'RemoteFileSystem': 'BB_REMOTEFILESYSTEM81_V',
+         'ReplicatesTo': 'BB_REPLICATESTO18_V',
+         'Repository': 'BB_REPOSITORY74_V',
+         'Requires': 'BB_REQUIRES83_V',
+         'ResidesOn': 'BB_RESIDESON91_V',
+         'ResolvesFrom': 'BB_RESOLVESFROM70_V',
+         'ResourcePool': 'BB_RESOURCEPOOL50_V',
+         'Role': 'BB_ROLE90_V',
+         'Room': 'BB_ROOM38_V',
+         'Router': 'BB_ROUTER99_V',
+         'RouterComposite': 'BB_ROUTERCOMPOSITE13_V',
+         'Routes': 'BB_ROUTES87_V',
+         'RoutesTo': 'BB_ROUTESTO50_V',
+         'RoutesVia': 'BB_ROUTESVIA97_V',
+         'Rule': 'BB_RULE86_V',
+         'RunDefinition': 'BB_RUNDEFINITION11_V',
+         'RunsOn': 'BB_RUNSON28_V',
+         'RuntimePermission': 'BB_RUNTIMEPERMISSION65_V',
+         'RuntimeProcess': 'BB_RUNTIMEPROCESS15_V',
+         'SAPComponent': 'BB_SAPCOMPONENT12_V',
+         'SAPSystem': 'BB_SAPSYSTEM60_V',
+         'SBaseCollection': 'BB_SBASECOLLECTION3_V',
+         'SCAComponent': 'BB_SCACOMPONENT2_V',
+         'SCAEntryPoint': 'BB_SCAENTRYPOINT85_V',
+         'SCAModule': 'BB_SCAMODULE67_V',
+         'SCSIInterface': 'BB_SCSIINTERFACE39_V',
+         'SCSIPath': 'BB_SCSIPATH21_V',
+         'SCSIProtocolController': 'BB_SCSIPROTOCOLCONTROLLER20_V',
+         'SCSIProtocolEndPoint': 'BB_SCSIPROTOCOLENDPOINT3_V',
+         'SCSIVolume': 'BB_SCSIVOLUME2_V',
+         'SComputerSystem': 'BB_SCOMPUTERSYSTEM58_V',
+         'SDMC': 'BB_SDMC81_V',
+         'SDeployableComponent': 'BB_SDEPLOYABLECOMPONENT64_V',
+         'SFunction': 'BB_SFUNCTION52_V',
+         'SGroup': 'BB_SGROUP19_V',
+         'SLA': 'BB_SLA60_V',
+         'SLO': 'BB_SLO74_V',
+         'SLogicalGroup': 'BB_SLOGICALGROUP98_V',
+         'SMBExport': 'BB_SMBEXPORT22_V',
+         'SMBFileSystem': 'BB_SMBFILESYSTEM61_V',
+         'SMBSAP': 'BB_SMBSAP76_V',
+         'SMBService': 'BB_SMBSERVICE63_V',
+         'SMSAdvertizements': 'BB_SMSADVERTIZEMENTS23_V',
+         'SMSCollectionClients': 'BB_SMSCOLLECTIONCLIENTS68_V',
+         'SMSCollections': 'BB_SMSCOLLECTIONS77_V',
+         'SMSHierarchy': 'BB_SMSHIERARCHY33_V',
+         'SMSPackage': 'BB_SMSPACKAGE32_V',
+         'SMSProgram': 'BB_SMSPROGRAM18_V',
+         'SMSQuery': 'BB_SMSQUERY98_V',
+         'SMSReports': 'BB_SMSREPORTS25_V',
+         'SMSResource': 'BB_SMSRESOURCE92_V',
+         'SMSServerProcess': 'BB_SMSSERVERPROCESS26_V',
+         'SMSSiteBoundaries': 'BB_SMSSITEBOUNDARIES29_V',
+         'SMSSiteComponents': 'BB_SMSSITECOMPONENTS81_V',
+         'SMSSiteServer': 'BB_SMSSITESERVER8_V',
+         'SMTPConfig': 'BB_SMTPCONFIG97_V',
+         'SMTPSAP': 'BB_SMTPSAP86_V',
+         'SMTPService': 'BB_SMTPSERVICE61_V',
+         'SNAProtocolEndpoint': 'BB_SNAPROTOCOLENDPOINT5_V',
+         'SNAService': 'BB_SNASERVICE81_V',
+         'SPXProtocolEndpoint': 'BB_SPXPROTOCOLENDPOINT58_V',
+         'SPhysicalFile': 'BB_SPHYSICALFILE1_V',
+         'SSLSettings': 'BB_SSLSETTINGS34_V',
+         'SSoftwareInstallation': 'BB_SSOFTWAREINSTALLATION55_V',
+         'SSoftwareServer': 'BB_SSOFTWARESERVER78_V',
+         'SameAs': 'BB_SAMEAS85_V',
+         'SametimeServer': 'BB_SAMETIMESERVER83_V',
+         'SchedulePolicy': 'BB_SCHEDULEPOLICY48_V',
+         'Scope': 'BB_SCOPE6_V',
+         'ScopeElement': 'BB_SCOPEELEMENT38_V',
+         'ScopeGroup': 'BB_SCOPEGROUP71_V',
+         'ScopeRestriction': 'BB_SCOPERESTRICTION1_V',
+         'Segment': 'BB_SEGMENT21_V',
+         'Selector': 'BB_SELECTOR85_V',
+         'SendConnector': 'BB_SENDCONNECTOR50_V',
+         'Sensor': 'BB_SENSOR35_V',
+         'SensorConfiguration': 'BB_SENSORCONFIGURATION59_V',
+         'ServerAlias': 'BB_SERVERALIAS17_V',
+         'ServerComposite': 'BB_SERVERCOMPOSITE9_V',
+         'ServerProcess': 'BB_SERVERPROCESS42_V',
+         'Service': 'BB_SERVICE81_V',
+         'ServiceAccessPoint': 'BB_SERVICEACCESSPOINT13_V',
+         'ServiceDependency': 'BB_SERVICEDEPENDENCY43_V',
+         'ServiceGroup': 'BB_SERVICEGROUP80_V',
+         'ServiceIPLabel': 'BB_SERVICEIPLABEL1_V',
+         'ServiceInfrastructure': 'BB_SERVICEINFRASTRUCTURE46_V',
+         'ServiceInfrastructurePerformancePolicy': 'BB_SERVICEINFRASTRUCTUREP4_V',
+         'ServiceInfrastructurePolicy': 'BB_SERVICEINFRASTRUCTUREP36_V',
+         'ServiceInfrastructureServiceClass': 'BB_SERVICEINFRASTRUCTURES21_V',
+         'ServiceInstance': 'BB_SERVICEINSTANCE72_V',
+         'ServiceProvider': 'BB_SERVICEPROVIDER54_V',
+         'Servlet': 'BB_SERVLET81_V',
+         'SessionBean': 'BB_SESSIONBEAN98_V',
+         'SharePointFarm': 'BB_SHAREPOINTFARM78_V',
+         'SharePointRole': 'BB_SHAREPOINTROLE26_V',
+         'SharePointServer': 'BB_SHAREPOINTSERVER69_V',
+         'SharePointWebApplication': 'BB_SHAREPOINTWEBAPPLICATI44_V',
+         'SharedServiceProvider': 'BB_SHAREDSERVICEPROVIDER54_V',
+         'SidecarHeatExchanger': 'BB_SIDECARHEATEXCHANGER63_V',
+         'SiebelComponent': 'BB_SIEBELCOMPONENT28_V',
+         'SiebelComponentInstance': 'BB_SIEBELCOMPONENTINSTANCE65_V',
+         'SiebelEnterprise': 'BB_SIEBELENTERPRISE54_V',
+         'SiebelGateway': 'BB_SIEBELGATEWAY19_V',
+         'SiebelServer': 'BB_SIEBELSERVER40_V',
+         'SiebelTask': 'BB_SIEBELTASK66_V',
+         'SimilarRule': 'BB_SIMILARRULE45_V',
+         'SimpleNameServerFunction': 'BB_SIMPLENAMESERVERFUNCTI8_V',
+         'SiteCollection': 'BB_SITECOLLECTION60_V',
+         'SiteInfo': 'BB_SITEINFO73_V',
+         'Slot': 'BB_SLOT41_V',
+         'SmartAnalyticsOptimizer': 'BB_SMARTANALYTICSOPTIMIZER61_V',
+         'Snapshots': 'BB_SNAPSHOTS62_V',
+         'SnmpSystemGroup': 'BB_SNMPSYSTEMGROUP28_V',
+         'SnmpTrapAgentConfiguration': 'BB_SNMPTRAPAGENTCONFIGURA89_V',
+         'SnmpTrapForwarderConfiguration': 'BB_SNMPTRAPFORWARDERCONFI80_V',
+         'SoftwareComponent': 'BB_SOFTWARECOMPONENT68_V',
+         'SoftwareContainer': 'BB_SOFTWARECONTAINER56_V',
+         'SoftwareFix': 'BB_SOFTWAREFIX32_V',
+         'SoftwareImage': 'BB_SOFTWAREIMAGE98_V',
+         'SoftwareInstallation': 'BB_SOFTWAREINSTALLATION55_V',
+         'SoftwareModification': 'BB_SOFTWAREMODIFICATION59_V',
+         'SoftwareModule': 'BB_SOFTWAREMODULE13_V',
+         'SoftwareModuleFunctionalGroup': 'BB_SOFTWAREMODULEFUNCTION27_V',
+         'SoftwarePatch': 'BB_SOFTWAREPATCH95_V',
+         'SoftwareProduct': 'BB_SOFTWAREPRODUCT26_V',
+         'SoftwareResource': 'BB_SOFTWARERESOURCE57_V',
+         'SoftwareUpdate': 'BB_SOFTWAREUPDATE70_V',
+         'Solaris': 'BB_SOLARIS7_V',
+         'SolarisFileSystem': 'BB_SOLARISFILESYSTEM14_V',
+         'SolarisKernelDriver': 'BB_SOLARISKERNELDRIVER72_V',
+         'SolarisPackage': 'BB_SOLARISPACKAGE33_V',
+         'SolarisPatch': 'BB_SOLARISPATCH27_V',
+         'SolarisStorageVolume': 'BB_SOLARISSTORAGEVOLUME50_V',
+         'Spawns': 'BB_SPAWNS1_V',
+         'SpecialityServer': 'BB_SPECIALITYSERVER29_V',
+         'SpecificIpViewConstruct': 'BB_SPECIFICIPVIEWCONSTRUCT21_V',
+         'SqlServer': 'BB_SQLSERVER89_V',
+         'SqlServerConfig': 'BB_SQLSERVERCONFIG27_V',
+         'SqlServerDataFile': 'BB_SQLSERVERDATAFILE97_V',
+         'SqlServerDatabase': 'BB_SQLSERVERDATABASE20_V',
+         'SqlServerModule': 'BB_SQLSERVERMODULE33_V',
+         'SqlServerProcess': 'BB_SQLSERVERPROCESS22_V',
+         'SqlServerTable': 'BB_SQLSERVERTABLE79_V',
+         'SqlServerUser': 'BB_SQLSERVERUSER8_V',
+         'StandardizationRule': 'BB_STANDARDIZATIONRULE34_V',
+         'StandardizationRuleSet': 'BB_STANDARDIZATIONRULESET20_V',
+         'StandardizationRuleSetMap': 'BB_STANDARDIZATIONRULESET56_V',
+         'StatefulSessionBean': 'BB_STATEFULSESSIONBEAN70_V',
+         'StatelessSessionBean': 'BB_STATELESSSESSIONBEAN28_V',
+         'StaticContentModule': 'BB_STATICCONTENTMODULE27_V',
+         'Storage': 'BB_STORAGE51_V',
+         'StorageCollection': 'BB_STORAGECOLLECTION37_V',
+         'StorageControllerFunction': 'BB_STORAGECONTROLLERFUNCT43_V',
+         'StorageExtent': 'BB_STORAGEEXTENT15_V',
+         'StoragePool': 'BB_STORAGEPOOL23_V',
+         'StorageSubSystem': 'BB_STORAGESUBSYSTEM16_V',
+         'StorageSubSystemFunction': 'BB_STORAGESUBSYSTEMFUNCTI52_V',
+         'StorageSubSystemZoneMember': 'BB_STORAGESUBSYSTEMZONEME94_V',
+         'StorageVolume': 'BB_STORAGEVOLUME95_V',
+         'StoredOn': 'BB_STOREDON21_V',
+         'SunFireComputerSystem': 'BB_SUNFIRECOMPUTERSYSTEM60_V',
+         'SunSPARCUnitaryComputerSystem': 'BB_SUNSPARCUNITARYCOMPUTE1_V',
+         'SunSPARCVirtualComputerSystem': 'BB_SUNSPARCVIRTUALCOMPUTE56_V',
+         'Supplier': 'BB_SUPPLIER12_V',
+         'SuppliesPowerAuxiliarlyTo': 'BB_SUPPLIESPOWERAUXILIARL6_V',
+         'SuppliesPowerSecondarilyTo': 'BB_SUPPLIESPOWERSECONDARI35_V',
+         'SuppliesPowerTo': 'BB_SUPPLIESPOWERTO78_V',
+         'Supports': 'BB_SUPPORTS15_V',
+         'SwitchComposite': 'BB_SWITCHCOMPOSITE52_V',
+         'SwitchToDevice': 'BB_SWITCHTODEVICE40_V',
+         'SybaseConfigValue': 'BB_SYBASECONFIGVALUE17_V',
+         'SybaseDatabase': 'BB_SYBASEDATABASE91_V',
+         'SybaseDevice': 'BB_SYBASEDEVICE26_V',
+         'SybaseEngineProcess': 'BB_SYBASEENGINEPROCESS81_V',
+         'SybaseLogin': 'BB_SYBASELOGIN67_V',
+         'SybaseModule': 'BB_SYBASEMODULE84_V',
+         'SybaseRemoteServer': 'BB_SYBASEREMOTESERVER27_V',
+         'SybaseResourceLimitation': 'BB_SYBASERESOURCELIMITATI80_V',
+         'SybaseRole': 'BB_SYBASEROLE74_V',
+         'SybaseSegment': 'BB_SYBASESEGMENT59_V',
+         'SybaseServer': 'BB_SYBASESERVER57_V',
+         'SybaseServerProcess': 'BB_SYBASESERVERPROCESS68_V',
+         'SybaseTable': 'BB_SYBASETABLE94_V',
+         'SybaseTablePartition': 'BB_SYBASETABLEPARTITION20_V',
+         'SybaseThreshold': 'BB_SYBASETHRESHOLD51_V',
+         'SybaseTimeRange': 'BB_SYBASETIMERANGE32_V',
+         'SybaseUser': 'BB_SYBASEUSER87_V',
+         'SyncQuery': 'BB_SYNCQUERY11_V',
+         'SyncSchedule': 'BB_SYNCSCHEDULE58_V',
+         'SysImagerNode': 'BB_SYSIMAGERNODE81_V',
+         'SysImagerNodeImage': 'BB_SYSIMAGERNODEIMAGE64_V',
+         'SysImagerOverride': 'BB_SYSIMAGEROVERRIDE93_V',
+         'Sysplex': 'BB_SYSPLEX62_V',
+         'SysplexGroup': 'BB_SYSPLEXGROUP63_V',
+         'SystemBusCard': 'BB_SYSTEMBUSCARD34_V',
+         'SystemController': 'BB_SYSTEMCONTROLLER67_V',
+         'SystemDependency': 'BB_SYSTEMDEPENDENCY87_V',
+         'SystemMediaLocation': 'BB_SYSTEMMEDIALOCATION49_V',
+         'SystemPComputerSystem': 'BB_SYSTEMPCOMPUTERSYSTEM43_V',
+         'SystemSpecificCollection': 'BB_SYSTEMSPECIFICCOLLECTI11_V',
+         'SystemTask': 'BB_SYSTEMTASK37_V',
+         'SystemTaskData': 'BB_SYSTEMTASKDATA42_V',
+         'SystemTaskDataInstance': 'BB_SYSTEMTASKDATAINSTANCE29_V',
+         'SystemTaskRuntime': 'BB_SYSTEMTASKRUNTIME57_V',
+         'SystemTaskRuntimeData': 'BB_SYSTEMTASKRUNTIMEDATA18_V',
+         'TMSAgent': 'BB_TMSAGENT77_V',
+         'TWSAgent': 'BB_TWSAGENT95_V',
+         'TapeDrive': 'BB_TAPEDRIVE34_V',
+         'TapeLibrary': 'BB_TAPELIBRARY11_V',
+         'TapeLibraryFunction': 'BB_TAPELIBRARYFUNCTION29_V',
+         'TapeMediaChanger': 'BB_TAPEMEDIACHANGER44_V',
+         'TapeMediaChangerFunction': 'BB_TAPEMEDIACHANGERFUNCTI20_V',
+         'Task': 'BB_TASK54_V',
+         'TaskData': 'BB_TASKDATA64_V',
+         'TaskRuntime': 'BB_TASKRUNTIME2_V',
+         'TaskRuntimeData': 'BB_TASKRUNTIMEDATA72_V',
+         'TcpConnection': 'BB_TCPCONNECTION23_V',
+         'TcpPort': 'BB_TCPPORT84_V',
+         'Template': 'BB_TEMPLATE26_V',
+         'Template': 'BB_TEMPLATE6_V',
+         'TemplateGroup': 'BB_TEMPLATEGROUP33_V',
+         'TomcatVirtualHosts': 'BB_TOMCATVIRTUALHOSTS55_V',
+         'TopLevelPropagatorConfiguration': 'BB_TOPLEVELPROPAGATORCONF19_V',
+         'TransactionalDependency': 'BB_TRANSACTIONALDEPENDENCY69_V',
+         'TransferSwitch': 'BB_TRANSFERSWITCH83_V',
+         'Transformer': 'BB_TRANSFORMER35_V',
+         'Transition': 'BB_TRANSITION54_V',
+         'TransportEndpoint': 'BB_TRANSPORTENDPOINT84_V',
+         'TransportRule': 'BB_TRANSPORTRULE66_V',
+         'TransportServer': 'BB_TRANSPORTSERVER57_V',
+         'Tru64': 'BB_TRU6430_V',
+         'Tru64KernelDriver': 'BB_TRU64KERNELDRIVER59_V',
+         'TypeViewConstruct': 'BB_TYPEVIEWCONSTRUCT74_V',
+         'UMDialPlan': 'BB_UMDIALPLAN68_V',
+         'URIAccessPoint': 'BB_URIACCESSPOINT51_V',
+         'URIAccessor': 'BB_URIACCESSOR4_V',
+         'URL': 'BB_URL21_V',
+         'UdpPort': 'BB_UDPPORT80_V',
+         'UnifiedMessagingServer': 'BB_UNIFIEDMESSAGINGSERVER96_V',
+         'UninterruptiblePowerSupply': 'BB_UNINTERRUPTIBLEPOWERSU42_V',
+         'UnitaryComputerSystem': 'BB_UNITARYCOMPUTERSYSTEM24_V',
+         'Unix': 'BB_UNIX76_V',
+         'UnixFileSystem': 'BB_UNIXFILESYSTEM69_V',
+         'UnixProcess': 'BB_UNIXPROCESS23_V',
+         'UsedBy': 'BB_USEDBY13_V',
+         'UserData': 'BB_USERDATA83_V',
+         'UserDataAttributeMeta': 'BB_USERDATAATTRIBUTEMETA40_V',
+         'UserDataMeta': 'BB_USERDATAMETA6_V',
+         'UserDefinedValue': 'BB_USERDEFINEDVALUE25_V',
+         'UserPreference': 'BB_USERPREFERENCE29_V',
+         'UserTask': 'BB_USERTASK87_V',
+         'UserTaskData': 'BB_USERTASKDATA86_V',
+         'UserTaskRuntime': 'BB_USERTASKRUNTIME47_V',
+         'UserTaskRuntimeData': 'BB_USERTASKRUNTIMEDATA38_V',
+         'Uses': 'BB_USES1_V',
+         'UsesDefault': 'BB_USESDEFAULT88_V',
+         'VApp': 'BB_VAPP97_V',
+         'VCSCluster': 'BB_VCSCLUSTER4_V',
+         'VCSHADServer': 'BB_VCSHADSERVER44_V',
+         'VCSLocalServiceGroup': 'BB_VCSLOCALSERVICEGROUP79_V',
+         'VCSResourceConfiguration': 'BB_VCSRESOURCECONFIGURATI34_V',
+         'VCSServiceGroup': 'BB_VCSSERVICEGROUP60_V',
+         'VCSSystem': 'BB_VCSSYSTEM49_V',
+         'VIOS': 'BB_VIOS37_V',
+         'VMWareCluster': 'BB_VMWARECLUSTER10_V',
+         'VMWareDVUplink': 'BB_VMWAREDVUPLINK23_V',
+         'VMWareDataStore': 'BB_VMWAREDATASTORE9_V',
+         'VMWarePortGroup': 'BB_VMWAREPORTGROUP2_V',
+         'VMWareVirtualSwitch': 'BB_VMWAREVIRTUALSWITCH83_V',
+         'VeritasClusterAttrMapping': 'BB_VERITASCLUSTERATTRMAPP90_V',
+         'VeritasClusterMapping': 'BB_VERITASCLUSTERMAPPING31_V',
+         'VeritasDiskGroup': 'BB_VERITASDISKGROUP26_V',
+         'VeritasPlex': 'BB_VERITASPLEX61_V',
+         'VeritasStorageService': 'BB_VERITASSTORAGESERVICE34_V',
+         'VeritasSubdisk': 'BB_VERITASSUBDISK5_V',
+         'VeritasVMDisk': 'BB_VERITASVMDISK92_V',
+         'VeritasVolume': 'BB_VERITASVOLUME86_V',
+         'ViewConstruct': 'BB_VIEWCONSTRUCT60_V',
+         'ViewDefinition': 'BB_VIEWDEFINITION34_V',
+         'Vip': 'BB_VIP26_V',
+         'VipFunction': 'BB_VIPFUNCTION98_V',
+         'VirtualCenter': 'BB_VIRTUALCENTER80_V',
+         'VirtualComputerSystem': 'BB_VIRTUALCOMPUTERSYSTEM33_V',
+         'VirtualService': 'BB_VIRTUALSERVICE59_V',
+         'VirtualTapeServer': 'BB_VIRTUALTAPESERVER0_V',
+         'VirtualTargetDevice': 'BB_VIRTUALTARGETDEVICE19_V',
+         'Virtualimage': 'BB_VIRTUALIMAGE94_V',
+         'Virtualizes': 'BB_VIRTUALIZES45_V',
+         'Vlan': 'BB_VLAN89_V',
+         'VlanInterface': 'BB_VLANINTERFACE56_V',
+         'VmwareESX': 'BB_VMWAREESX30_V',
+         'VmwareUnitaryComputerSystem': 'BB_VMWAREUNITARYCOMPUTERS70_V',
+         'WPARComputerSystem': 'BB_WPARCOMPUTERSYSTEM58_V',
+         'WSEndpoint': 'BB_WSENDPOINT27_V',
+         'WSOperation': 'BB_WSOPERATION45_V',
+         'WSPort': 'BB_WSPORT31_V',
+         'WSPortType': 'BB_WSPORTTYPE77_V',
+         'WebConfig': 'BB_WEBCONFIG99_V',
+         'WebConnection': 'BB_WEBCONNECTION46_V',
+         'WebContainer': 'BB_WEBCONTAINER81_V',
+         'WebLogicAdminServer': 'BB_WEBLOGICADMINSERVER0_V',
+         'WebLogicCluster': 'BB_WEBLOGICCLUSTER88_V',
+         'WebLogicConnection': 'BB_WEBLOGICCONNECTION9_V',
+         'WebLogicConnector': 'BB_WEBLOGICCONNECTOR21_V',
+         'WebLogicConnectorModule': 'BB_WEBLOGICCONNECTORMODULE91_V',
+         'WebLogicDomain': 'BB_WEBLOGICDOMAIN22_V',
+         'WebLogicEJB': 'BB_WEBLOGICEJB77_V',
+         'WebLogicEJBContainer': 'BB_WEBLOGICEJBCONTAINER50_V',
+         'WebLogicEJBModule': 'BB_WEBLOGICEJBMODULE33_V',
+         'WebLogicEntityEJB': 'BB_WEBLOGICENTITYEJB96_V',
+         'WebLogicJ2EEApplication': 'BB_WEBLOGICJ2EEAPPLICATION82_V',
+         'WebLogicJDBCConnectionPool': 'BB_WEBLOGICJDBCCONNECTION65_V',
+         'WebLogicJDBCDataSource': 'BB_WEBLOGICJDBCDATASOURCE14_V',
+         'WebLogicJDBCDriver': 'BB_WEBLOGICJDBCDRIVER91_V',
+         'WebLogicJDBCMultiPool': 'BB_WEBLOGICJDBCMULTIPOOL88_V',
+         'WebLogicJDBCTxDataSource': 'BB_WEBLOGICJDBCTXDATASOUR50_V',
+         'WebLogicJMSConnectionFactory': 'BB_WEBLOGICJMSCONNECTIONF62_V',
+         'WebLogicJMSDestination': 'BB_WEBLOGICJMSDESTINATION28_V',
+         'WebLogicJMSFileStore': 'BB_WEBLOGICJMSFILESTORE87_V',
+         'WebLogicJMSJDBCStore': 'BB_WEBLOGICJMSJDBCSTORE96_V',
+         'WebLogicJMSQueue': 'BB_WEBLOGICJMSQUEUE7_V',
+         'WebLogicJMSServer': 'BB_WEBLOGICJMSSERVER69_V',
+         'WebLogicJMSSessionPool': 'BB_WEBLOGICJMSSESSIONPOOL92_V',
+         'WebLogicJMSStore': 'BB_WEBLOGICJMSSTORE75_V',
+         'WebLogicJMSTopic': 'BB_WEBLOGICJMSTOPIC21_V',
+         'WebLogicJTA': 'BB_WEBLOGICJTA63_V',
+         'WebLogicMachine': 'BB_WEBLOGICMACHINE61_V',
+         'WebLogicMessageEJB': 'BB_WEBLOGICMESSAGEEJB8_V',
+         'WebLogicNodeManager': 'BB_WEBLOGICNODEMANAGER29_V',
+         'WebLogicPlugin': 'BB_WEBLOGICPLUGIN74_V',
+         'WebLogicSSLSettings': 'BB_WEBLOGICSSLSETTINGS41_V',
+         'WebLogicServer': 'BB_WEBLOGICSERVER49_V',
+         'WebLogicServlet': 'BB_WEBLOGICSERVLET63_V',
+         'WebLogicSessionEJB': 'BB_WEBLOGICSESSIONEJB43_V',
+         'WebLogicVirtualHost': 'BB_WEBLOGICVIRTUALHOST99_V',
+         'WebLogicWebContainer': 'BB_WEBLOGICWEBCONTAINER87_V',
+         'WebLogicWebModule': 'BB_WEBLOGICWEBMODULE90_V',
+         'WebModule': 'BB_WEBMODULE32_V',
+         'WebModule': 'BB_WEBMODULE88_V',
+         'WebProxyServer': 'BB_WEBPROXYSERVER39_V',
+         'WebRetriever': 'BB_WEBRETRIEVER81_V',
+         'WebServer': 'BB_WEBSERVER15_V',
+         'WebServerConfigDirective': 'BB_WEBSERVERCONFIGDIRECTI86_V',
+         'WebService': 'BB_WEBSERVICE9_V',
+         'WebSphereAuthMappingModule': 'BB_WEBSPHEREAUTHMAPPINGMO18_V',
+         'WebSphereCell': 'BB_WEBSPHERECELL98_V',
+         'WebSphereCluster': 'BB_WEBSPHERECLUSTER42_V',
+         'WebSphereClusterMember': 'BB_WEBSPHERECLUSTERMEMBER28_V',
+         'WebSphereConfiguredConnection': 'BB_WEBSPHERECONFIGUREDCON24_V',
+         'WebSphereConnector': 'BB_WEBSPHERECONNECTOR47_V',
+         'WebSphereConnectorModule': 'BB_WEBSPHERECONNECTORMODU1_V',
+         'WebSphereCustomUserRegistry': 'BB_WEBSPHERECUSTOMUSERREG53_V',
+         'WebSphereDeploymentManager': 'BB_WEBSPHEREDEPLOYMENTMAN60_V',
+         'WebSphereDynamicCache': 'BB_WEBSPHEREDYNAMICCACHE71_V',
+         'WebSphereDynamicCluster': 'BB_WEBSPHEREDYNAMICCLUSTER15_V',
+         'WebSphereEFixInfo': 'BB_WEBSPHEREEFIXINFO58_V',
+         'WebSphereEJB': 'BB_WEBSPHEREEJB75_V',
+         'WebSphereEJBContainer': 'BB_WEBSPHEREEJBCONTAINER8_V',
+         'WebSphereEJBModule': 'BB_WEBSPHEREEJBMODULE59_V',
+         'WebSphereGlobalSecuritySettings': 'BB_WEBSPHEREGLOBALSECURIT74_V',
+         'WebSphereHTTPTransport': 'BB_WEBSPHEREHTTPTRANSPORT79_V',
+         'WebSphereJ2EEApplication': 'BB_WEBSPHEREJ2EEAPPLICATI72_V',
+         'WebSphereJ2EEResource': 'BB_WEBSPHEREJ2EERESOURCE78_V',
+         'WebSphereJ2EEResourceProperty': 'BB_WEBSPHEREJ2EERESOURCEP27_V',
+         'WebSphereJDBCConnectionPool': 'BB_WEBSPHEREJDBCCONNECTIO3_V',
+         'WebSphereJDBCDataSource': 'BB_WEBSPHEREJDBCDATASOURCE16_V',
+         'WebSphereJDBCProvider': 'BB_WEBSPHEREJDBCPROVIDER36_V',
+         'WebSphereJMSDestination': 'BB_WEBSPHEREJMSDESTINATION38_V',
+         'WebSphereJMSProvider': 'BB_WEBSPHEREJMSPROVIDER13_V',
+         'WebSphereJMSQueue': 'BB_WEBSPHEREJMSQUEUE65_V',
+         'WebSphereJMSServer': 'BB_WEBSPHEREJMSSERVER43_V',
+         'WebSphereJMSTopic': 'BB_WEBSPHEREJMSTOPIC79_V',
+         'WebSphereJVMSettings': 'BB_WEBSPHEREJVMSETTINGS12_V',
+         'WebSphereLDAPUserRegistry': 'BB_WEBSPHERELDAPUSERREGIS3_V',
+         'WebSphereLibraryRef': 'BB_WEBSPHERELIBRARYREF60_V',
+         'WebSphereMQJMSDestination': 'BB_WEBSPHEREMQJMSDESTINAT18_V',
+         'WebSphereMQJMSQueue': 'BB_WEBSPHEREMQJMSQUEUE35_V',
+         'WebSphereMQJMSTopic': 'BB_WEBSPHEREMQJMSTOPIC21_V',
+         'WebSphereNamedEndpoint': 'BB_WEBSPHERENAMEDENDPOINT74_V',
+         'WebSphereNode': 'BB_WEBSPHERENODE42_V',
+         'WebSphereNodeAgent': 'BB_WEBSPHERENODEAGENT27_V',
+         'WebSphereProcessDefinition': 'BB_WEBSPHEREPROCESSDEFINI6_V',
+         'WebSphereProcessMonitoringPolicy': 'BB_WEBSPHEREPROCESSMONITO25_V',
+         'WebSphereProperty': 'BB_WEBSPHEREPROPERTY17_V',
+         'WebSphereSSLSettings': 'BB_WEBSPHERESSLSETTINGS77_V',
+         'WebSphereServer': 'BB_WEBSPHERESERVER59_V',
+         'WebSphereServlet': 'BB_WEBSPHERESERVLET17_V',
+         'WebSphereSessionTuningParams': 'BB_WEBSPHERESESSIONTUNING43_V',
+         'WebSphereSharedLibrary': 'BB_WEBSPHERESHAREDLIBRARY46_V',
+         'WebSphereTransactionService': 'BB_WEBSPHERETRANSACTIONSE1_V',
+         'WebSphereUserRegistry': 'BB_WEBSPHEREUSERREGISTRY0_V',
+         'WebSphereVariable': 'BB_WEBSPHEREVARIABLE44_V',
+         'WebSphereVirtualHost': 'BB_WEBSPHEREVIRTUALHOST79_V',
+         'WebSphereWebContainer': 'BB_WEBSPHEREWEBCONTAINER49_V',
+         'WebSphereWebModule': 'BB_WEBSPHEREWEBMODULE16_V',
+         'WebSphereXSCache': 'BB_WEBSPHEREXSCACHE39_V',
+         'WebSphereXSCacheNode': 'BB_WEBSPHEREXSCACHENODE79_V',
+         'WebStaticContentModule': 'BB_WEBSTATICCONTENTMODULE27_V',
+         'WebVirtualHost': 'BB_WEBVIRTUALHOST77_V',
+         'WebVirtualHostConfigDirective': 'BB_WEBVIRTUALHOSTCONFIGDI54_V',
+         'WeblogicClassPathEntry': 'BB_WEBLOGICCLASSPATHENTRY68_V',
+         'WeblogicDomainAddressEntry': 'BB_WEBLOGICDOMAINADDRESSE91_V',
+         'WeblogicDomainEntry': 'BB_WEBLOGICDOMAINENTRY87_V',
+         'WindowsComputerSystem': 'BB_WINDOWSCOMPUTERSYSTEM20_V',
+         'WindowsFileSystem': 'BB_WINDOWSFILESYSTEM1_V',
+         'WindowsOperatingSystem': 'BB_WINDOWSOPERATINGSYSTEM62_V',
+         'WindowsService': 'BB_WINDOWSSERVICE55_V',
+         'Workflow': 'BB_WORKFLOW28_V',
+         'WorkflowRuntime': 'BB_WORKFLOWRUNTIME8_V',
+         'WorkloadResourceGroup': 'BB_WORKLOADRESOURCEGROUP24_V',
+         'ZAAP': 'BB_ZAAP92_V',
+         'ZBXFeature': 'BB_ZBXFEATURE56_V',
+         'ZCP': 'BB_ZCP43_V',
+         'ZCouplingFacility': 'BB_ZCOUPLINGFACILITY28_V',
+         'ZHMC': 'BB_ZHMC6_V',
+         'ZIIP': 'BB_ZIIP56_V',
+         'ZLinux': 'BB_ZLINUX32_V',
+         'ZOS': 'BB_ZOS68_V',
+         'ZReportFile': 'BB_ZREPORTFILE88_V',
+         'ZSeriesComputerSystem': 'BB_ZSERIESCOMPUTERSYSTEM25_V',
+         'ZSupportElement': 'BB_ZSUPPORTELEMENT47_V',
+         'ZVM': 'BB_ZVM57_V',
+         'ZVMGuest': 'BB_ZVMGUEST45_V',
+         'Zone': 'BB_ZONE20_V',
+         'Zone': 'BB_ZONE49_V',
+         'ZoneAlias': 'BB_ZONEALIAS4_V',
+         'ZoneMember': 'BB_ZONEMEMBER94_V',
+         'ZoneSet': 'BB_ZONESET74_V',
+         'ipso': 'BB_IPSO28_V'
+         }
+
+class MO_Array(object):
+    def __init__(self, mo_array=None):
+        self.lock = threading.Lock()
+        self.mo_array = mo_array
+
+    def get(self):
+        logging.debug('Waiting for mo_array lock')
+        self.lock.acquire()
+        mo = None
+        try:
+            logging.debug('Acquired mo_array lock')
+            if self.mo_array:
+                mo = self.mo_array.pop()
+        finally:
+            self.lock.release()
+        return mo
+
+class Output(object):
+    def __init__(self, start=0):
+        self.lock = threading.Lock()
+        self.value = start
+
+    def println(self, msg):
+        logging.debug('Waiting for output lock')
+        self.lock.acquire()
+        try:
+            logging.debug('Acquired output lock')
+            print msg
+        finally:
+            self.lock.release()
+
+    def print_model_object(self, mo, print_laststored):
+        logging.debug('Waiting for output lock')
+        self.lock.acquire()
+        try:
+            logging.debug('Acquired output lock')
+            try: 
+                display_name=mo.getLabel()
+            except:
+                try: 
+                    display_name=mo.getDisplayName()
+                except:
+                    display_name=None
+
+            if print_laststored == True:
+                print "%32s %30s %20s" % (mo.getGuid(), display_name, mo.getLastStoredTime())
+            else:
+                print "%32s %30s" % (mo.getGuid(), display_name)
+        finally:
+            self.lock.release()
+
+def worker(mo_array,delete,save,print_laststored):
+    LogDebug("Creating TADDM API Connection")
+    conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
+    sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
+    api = sess.createCMDBApi()
+    LogDebug("TADDM API Connection CREATED")
+    
+    mo = mo_array.get()
+    while mo:
+        try:
+            output.print_model_object(mo,print_laststored)
+            if save:
+                output.println(" " + str(mo.getGuid()) + "  --> Saving to xml")
+                try:
+                    guid=mo.getGuid()
+                except:
+                    output.println("Skipping a ModelObject, no GUID -- Very odd...")
+                    continue
+                   
+                file_name = str(mo.getGuid()) + ".xml"
+                
+                output.println("    --> Writing data to " + str(file_name))
+            
+                xml_doc = api.findXML(mo.getGuid(),4,3,None) 
+                f = open(str(export_dir) + "/" + str(file_name),"w")
+                try:
+                    f.write(xml_doc.encode('ascii', 'ignore'))
+                except:
+                    LogError("Failed to save")
+                    output.println(" " + str(mo.getGuid()) + "  --> Save failed")
+                f.close()
+            if delete:
+                output.println(" " + str(mo.getGuid()) + "  --> Removing object")
+                api.delete([mo], None)
+                output.println(" " + str(mo.getGuid()) + "  --> Success")
+        except:
+            LogError("Failed to delete")
+            output.println(" " + str(mo.getGuid()) + "  --> Delete failed")
+        mo = mo_array.get()
+    
+    api.close()
+    sess.close()
+    conn.close()
+
+def main():
+
+    # define DB connection
+    dbConn = None
+    try:
+        LogInfo("Starting...") 
+        try:
+            opts, args = getopt.getopt(sys.argv[1:], 'u:p:hC:cA:L:SDs:E:H:t:q', ['help', 'l2orphans', 'chk_sups', 'print_laststored', 'epoch=', 'skip_zos', 'skip_failed='] )
+        except getopt.GetoptError, err:
+            # print help information and exit:
+            print str(err) # will print something like "option -a not recognized"
+            usage()
+            sys.exit(2)
+        
+        LogDebug("Options " + str(opts))
+        global userid
+        userid = None
+        global password
+        password = None
+        display_name = None
+        scope_name = None
+        scope_out = None
+        global export_dir
+        export_dir = "." # default to current directory
+        save = 0
+        depth = 3
+        subclasses = True
+        l2orphans = False
+        chk_sups = False
+        skip_zos = False
+        delete = 0
+        limit = 0
+        dbProdName = None # database product name
+        age = None
+        action_string = ""
+        show_query = False
+        class_name = "ComputerSystem"
+        print_laststored = False
+        epoch = None
+        skip_failed = 0
+        num_threads = 1
+        for o, a in opts:
+            if o == "-u":
+                userid = a
+            elif o == "-p":
+                password = a
+            elif o == "-A":
+                age = int(a)
+            elif o == "-C":
+                class_name = a
+            elif o == "-L":
+                limit = int(a)
+            elif o == "-s":
+                scope_name = a
+            elif o == "-S":
+                save = 1
+                action_string = action_string + " SAVE"
+            elif o == "-D":
+                delete = 1
+                action_string = action_string + " DELETE"
+            elif o == "-E":
+                export_dir = a
+            elif o == "-H":
+                display_name = a
+            elif o == "-c":
+                subclasses = False
+            elif o == "--l2orphans":
+                l2orphans = True
+            elif o == "--chk_sups":
+                chk_sups = True
+            elif o == "--skip_zos":
+                skip_zos = True
+            elif o == "-q":
+                show_query = True
+            elif o == "--print_laststored":
+                print_laststored = True
+            elif o == "--epoch":
+                epoch = a
+            elif o == "--skip_failed":
+                skip_failed = a
+            elif o == "-t":
+                num_threads = int(a)
+            elif o in ("-h", "--help"):
+                usage()
+                sys.exit()
+            else:
+                assert False, "unhandled option"
+
+        if l2orphans is True and str(class_name) != 'L2Interface':
+            print 'Option --l2orphans found without matching L2Interface Classname option'
+            usage()
+            sys.exit()
+        
+        if l2orphans is True and age != 0:
+            print 'Option --l2orphans found without matching value \'0\' for age'
+            usage()
+            sys.exit()
+        
+        #------------------------------------------------
+        # Set Defaults...
+        #------------------------------------------------
+        if userid is None:
+            userid = "administrator"
+
+        if password is None:
+            password = "collation"
+        #
+        # Initialize
+        #
+
+        LogDebug('Initializing API')
+        if display_name is not None or age is not None or epoch is not None:
+            model_objects = []
+            LogDebug("Creating TADDM API Connection")
+            conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
+            sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
+            api = sess.createCMDBApi()
+            LogDebug("TADDM API Connection CREATED")
+        else:
+            usage()
+            sys.exit()
+
+        LogDebug('Initializing database connection')
+        # initialize database connection if we have a view for the class
+        if (age is not None or epoch is not None) and views.get(str(class_name), None) is not None:
+            props = TopologyManagerFactory.getProps()
+            dbConn = connectToDB(props.getDbDriver(), props.getDbUrl(), props.getDbUser(), props.getDbPassword())
+            dbProdName = dbConn.getMetaData().getDatabaseProductName()
+        
+        # Build our Work Queue based on Age or DisplayName.
+        # Process Queue.
+        if display_name is not None:
+            print "Using " + str(display_name)
+            mql_query = "select * from " + str(class_name) + " where displayName==\"" + str(display_name) + "\""
+            LogDebug("Executing query: " + str(mql_query))
+            mo_data = api.executeQuery(str(mql_query), 0 , None, None)
+        elif age is not None or epoch is not None:
+            if epoch is not None:
+                end_time = epoch
+            else:
+                end_time = age_to_time(age)
+            all_model_object_query = "select * from " + str(class_name)
+            if dbConn is not None:
+                all_model_object_query = "SELECT * FROM " + views[str(class_name)]
+            if age == 0 and l2orphans is False:
+                mql_query = all_model_object_query
+                sql_query = all_model_object_query
+                
+                if chk_sups is True:
+                    if dbProdName.upper().find('DB2') == -1:
+                        # use Oracle query
+                        sql_query = sql_query + " WHERE HEXTORAW(GUID_C) NOT IN(SELECT SUP_SUPR_GUID FROM SUPERIORS)"
+                    else:
+                        # use DB2 query
+                        #sql_query = sql_query + " WHERE GUID_C NOT IN(SELECT HEX(SUP_SUPR_GUID) FROM SUPERIORS)"
+                        sql_query = sql_query + " A INNER JOIN PERSOBJ_ALIASES PA ON A.GUID_C = PA.GUID_X WHERE PA.NRS_GUID_X NOT IN(SELECT HEX(SUP_SUPR_GUID) FROM SUPERIORS)"
+
+                # I know this is ugly, forgive me
+                if subclasses is False:
+                    if chk_sups is True:
+                        sql_query = sql_query + " AND JDOCLASS_C LIKE \'%." + str(class_name) + "Jdo\'"
+                    else:
+                        sql_query = sql_query + " WHERE JDOCLASS_C LIKE \'%." + str(class_name) + "Jdo\'"
+                        
+                # I know this is ugly, forgive me
+                if skip_zos is True:
+                    if chk_sups is True or subclasses is False:
+                        sql_query = sql_query + " AND JDOCLASS_C NOT LIKE \'%.zOS.%\'"
+                    else:
+                        sql_query = sql_query + " WHERE JDOCLASS_C NOT LIKE \'%.zOS.%\'"
+                
+            else:
+                mql_query = "select * from " + str(class_name) + " where lastModifiedTime < \'" + str(long(end_time)) + "\' order by lastModifiedTime asc"
+                if dbConn is not None:
+                    #sql_query = "SELECT * FROM " + views[str(class_name)] + " WHERE LASTMODIFIEDTIME_C < \'" + str(long(end_time)) + "\'"
+                    if dbProdName.upper().find('DB2') != -1:
+                        # use DB2 syntax and cast value
+                        laststored_query = "LASTMODIFIEDTIME_C < CAST(\'" + str(long(end_time)) + "\' AS BIGINT)"
+                    else:
+                        # use Oracle syntax, no cast necessary
+                        laststored_query = "LASTMODIFIEDTIME_C < \'" + str(long(end_time)) + "\'"
+                    sql_query = "SELECT * FROM " + views[str(class_name)]
+                    if chk_sups is True:
+                        if dbProdName.upper().find('DB2') == -1:
+                            # use Oracle query
+                            sql_query = sql_query + " WHERE HEXTORAW(GUID_C) NOT IN(SELECT SUP_SUPR_GUID FROM SUPERIORS) AND " + laststored_query
+                        else:
+                            # use DB2 query
+                            #sql_query = sql_query + " AND GUID_C NOT IN(SELECT HEX(SUP_SUPR_GUID) FROM SUPERIORS)"
+                            sql_query = sql_query + " A INNER JOIN PERSOBJ_ALIASES PA ON A.GUID_C = PA.GUID_X WHERE PA.NRS_GUID_X NOT IN(SELECT HEX(SUP_SUPR_GUID) FROM SUPERIORS) AND A." + laststored_query
+
+                    if subclasses is False:
+                        if chk_sups is True:
+                            sql_query = sql_query + " AND JDOCLASS_C LIKE \'%." + str(class_name) + "Jdo\'"
+                        else:
+                            sql_query = sql_query + " WHERE JDOCLASS_C LIKE \'%." + str(class_name) + "Jdo\' AND " + laststored_query
+                    
+                    if skip_zos is True:
+                        if chk_sups is True or subclasses is False:
+                            sql_query = sql_query + " AND JDOCLASS_C NOT LIKE \'%.zOS.%\'"
+                        else:
+                            sql_query = sql_query + " WHERE JDOCLASS_C NOT LIKE \'%.zOS.%\'"
+
+                    if chk_sups is False and subclasses is True:
+                        if skip_zos is False:
+                            sql_query = sql_query + " WHERE " + laststored_query
+                        else:
+                            sql_query = sql_query + " AND " + laststored_query
+                    
+                    if chk_sups is True and dbProdName.upper().find('DB2') != -1:
+                        sql_query = sql_query + " ORDER BY A.LASTMODIFIEDTIME_C ASC"
+                    else:
+                        sql_query = sql_query + " ORDER BY LASTMODIFIEDTIME_C ASC"
+                    
+                    if l2orphans is True:
+                        sql_query = "SELECT * FROM " + views[str(class_name)] + " LEFT OUTER JOIN BB_COMPUTERSYSTEM40_V ON (BB_L2INTERFACE41_V.PK__PARENTL2INTERFACE_C = BB_COMPUTERSYSTEM40_V.PK_C) WHERE (BB_COMPUTERSYSTEM40_V.GUID_C IS NULL)"
+                
+            LogDebug("Executing query for all_model_objects")
+            all_model_objects_count = None
+            to_expire_count = None
+            if dbConn is None:
+                all_model_objects_count = api.findCount(str(all_model_object_query), None)
+                to_expire_count = api.findCount(str(mql_query), None)
+            else:
+                all_model_objects_count = findCount(dbConn, str(all_model_object_query))
+                to_expire_count = findCount(dbConn, str(sql_query))
+            
+            LogInfo("Total: " + str(class_name) + ":" + str(all_model_objects_count) + " Export: " + str(to_expire_count)) 
+            print "All of " + str(class_name) + " " + str(all_model_objects_count)
+            print "Aged " + str(class_name) + " " + str(to_expire_count)
+            
+            # if not writing scope then don't need FQDN_C column and can specify the following 
+            # universal columns for increased performance
+            if scope_name is None and l2orphans is False:
+                sql_query = sql_query.replace('SELECT * ', 'SELECT GUID_C, DISPLAYNAME_C, LABEL_C, JDOCLASS_C, LASTMODIFIEDTIME_C, LASTSTOREDTIME_C, CONTEXTIP_C ')
+                
+            if show_query is True:
+                print 75*"="
+                print 'Query: ' + sql_query
+
+            LogDebug("Executing query for old model objects")
+            if age is not None:
+                print_action_header("The following objects are older than Age: " + str(age) + " days")
+            else:
+                print_action_header("The following objects are older than epoch: " + str(epoch))
+            
+            if (dbConn is not None):
+                stmt = dbConn.createStatement()
+                
+                # generate 
+                mo_data = stmt.executeQuery(sql_query)
+                #while rs.next():
+                #    mo_data.append(rs.getString(1))
+            else:
+                #to_expire_mos = api.find(str(mql_query), 1 , None, None)
+                mo_data = api.executeQuery(str(mql_query), 0 , None, None)
+                #mo_meta = mo_data.getMetaData()
+        else:
+            print "Nothing to do"
+            usage()
+            sys.exit()
+
+        # query the discovery events to find failed session sensors if needed
+        ip_failed = []
+        if skip_failed is not 0:
+            LogDebug('Skipping failed discoveries from last ' + str(skip_failed) + ' weeks')
+            if dbConn is not None:
+                ipstmt = dbConn.createStatement()
+                sql_query = '''SELECT DISTINCT
+                                dai1.DE_IP IP 
+                               FROM 
+                                DISCEVNT d1, DISCEVNT_ATTR_IP dai1, DISCEVNT_RUN dr1 
+                               WHERE 
+                                (d1.EVENT_ATTRIBUTE = dai1.DE_ATTR ) AND 
+                                (d1.EVENT_RUNID = dr1.DE_RUN_ID) AND 
+                                d1.EVENT_SEVERITY = 5 AND 
+                                dai1.DE_SENSOR = 'SessionSensor' AND 
+                                dr1.DE_START_WEEK_DATE IN 
+                                 ( SELECT * FROM ( SELECT DISTINCT DE_START_WEEK_DATE FROM DISCEVNT_RUN ORDER BY DE_START_WEEK_DATE DESC ) '''
+                
+                # Get last x rows
+                if dbProdName.upper().find('DB2') != -1:
+                    # use DB2 syntax
+                    sql_query = sql_query + 'FETCH FIRST ' + str(skip_failed) + ' ROWS ONLY )'
+                else:
+                    # use Oracle syntax
+                    sql_query = sql_query + 'WHERE ROWNUM <= ' + str(skip_failed) + ' )'
+
+                # add on query to take out any IP addresses where there was a successful Session/SnmpMib2
+                sql_query = sql_query + '''
+                                AND NOT EXISTS
+                                (
+                                   SELECT 1
+                                   FROM DISCEVNT d2, DISCEVNT_ATTR_IP dai2, DISCEVNT_RUN dr2
+                                   WHERE
+                                   d2.EVENT_ATTRIBUTE = dai2.DE_ATTR
+                                   AND d2.EVENT_RUNID = dr2.DE_RUN_ID
+                                   AND ( dai2.DE_SENSOR = 'SessionSensor' OR dai2.DE_SENSOR = 'SnmpMib2Sensor' )
+                                   AND d2.EVENT_DESC like 'Discovered:%'
+                                   AND d1.EVENT_ATTRIBUTE = d2.EVENT_ATTRIBUTE
+                                   AND dai1.DE_IP = dai2.DE_IP
+                                   AND dr2.DE_START_WEEK_DATE IN 
+                                        ( SELECT * FROM ( SELECT DISTINCT DE_START_WEEK_DATE FROM DISCEVNT_RUN ORDER BY DE_START_WEEK_DATE DESC ) '''
+                                        
+                # Get last x rows for successes
+                if dbProdName.upper().find('DB2') != -1:
+                    # use DB2 syntax
+                    sql_query = sql_query + 'FETCH FIRST ' + str(skip_failed) + ' ROWS ONLY )'
+                else:
+                    # use Oracle syntax
+                    sql_query = sql_query + 'WHERE ROWNUM <= ' + str(skip_failed) + ' )'
+                
+                # add last paren for the AND NOT EXISTS clause
+                sql_query = sql_query + ' )'
+
+                # generate 
+                iprs = ipstmt.executeQuery(sql_query)
+                while iprs.next():
+                    LogDebug('Adding IP to ip_failed:' + iprs.getString(1))
+                    ip_failed.append(iprs.getString(1))
+                iprs.close()
+                ipstmt.close()
+                LogDebug('ip_failed:' + str(ip_failed))
+            else:
+                print "Database connection not established, unable to skip failed sensor components"
+                sys.exit(3)
+        
+        # Now we take mo_data and process it... 
+
+        if save:
+            if os.path.exists(export_dir):
+                print "writing data to " + str(export_dir)
+            else:
+                print "Creating ..." + str(export_dir)
+                os.mkdir(export_dir)
+        
+        print_model_object_header(print_laststored)
+        count = 0
+        to_process_mos = []
+        while (mo_data.next()):
+            if (limit > 0 ) and (count >= limit):
+                print "!!!!!!!!!!!!!!! Breaking due to Limit: " + str(limit)
+                break
+                
+            mo = None
+            if (dbConn is None):
+                mo = mo_data.getModelObject(1)
+                if not mo.hasLastStoredTime():
+                    mo.setLastStoredTime(mo.getLastModifiedTime())
+            else:
+                moClass = 'com.collation.platform.model.ModelObject'
+                try:
+                    # format: com.collation.topomgr.jdo.topology.sys.windows.WindowsComputerSystemJdo
+                    moClass = mo_data.getString('JDOCLASS_C')
+                    if moClass is None:
+                        moClass = 'com.collation.platform.model.ModelObject'
+                    else:
+                        moClass = moClass.replace('com.collation.topomgr.jdo', 'com.collation.platform.model').replace('Jdo','')
+                except:
+                    pass
+                LogDebug('Creating MO type ' + moClass)
+                mo = sensorhelper.newModelObject(moClass)
+                LogDebug('Creating guid ' + mo_data.getString('GUID_C'))
+                guid = Guid(mo_data.getString('GUID_C'))
+                mo.setGuid(guid)
+                label = mo_data.getString('LABEL_C')
+                if label is None:
+                    label = mo_data.getString('DISPLAYNAME_C')
+                mo.setLabel(label)
+                try:
+                    fqdn = mo_data.getString('FQDN_C')
+                    if fqdn is not None:
+                        LogDebug('setting fqdn to ' + fqdn)
+                        mo.setFqdn(fqdn)
+                except:
+                    # no FQDN_C column for this class
+                    pass
+                try:
+                    # try to use laststoredtime if it's set, it is not set for components that haven't
+                    # been updated since the 7.3 upgrade so we need to check both
+                    lastStored = mo_data.getString('LASTSTOREDTIME_C')
+                    if lastStored is not None:
+                        LogDebug('setting lastStoredTime to ' + lastStored)
+                        mo.setLastStoredTime(long(lastStored))
+                except:
+                    # no LASTSTOREDTIME_C column for this class
+                    pass
+                # whiffed on laststoredtime, so use deprecated lastmodifiedtime instead
+                if not mo.hasLastStoredTime():
+                    lastMod = mo_data.getString('LASTMODIFIEDTIME_C')
+                    if lastMod is not None:
+                        LogDebug('setting lastStoredTime to ' + lastMod)
+                        mo.setLastStoredTime(long(lastMod))
+                # set contextIp if available
+                try:
+                    contextIp = mo_data.getString('CONTEXTIP_C')
+                    if contextIp is not None:
+                        LogDebug('setting contextIp to ' + contextIp)
+                        mo.setContextIp(contextIp)
+                except:
+                    # no CONTEXTIP_C column
+                    pass
+
+            if skip_zos is True:
+                if 'zOS' in moClass:
+                    print_model_object(mo,print_laststored)
+                    print "  --> Skipping zOS"
+                    LogDebug('Skipping zOS component')
+                    continue
+
+            # skip delete for failed discoveries
+            if skip_failed is not 0 and mo.hasContextIp():
+                contextIp = mo.getContextIp()
+                if contextIp in ip_failed:
+                    print_model_object(mo,print_laststored)
+                    print "  --> Skipping for failed discovery"
+                    LogDebug('Skipping component for failed discovery')
+                    continue
+
+            if not delete and not save:
+                print_model_object(mo,print_laststored)
+
+            if scope_name is not None:
+                # Add to a scope
+                if delete or save:
+                    print " " + str(mo.getGuid()),
+                print "  --> Writing to scope",
+                if scope_out is None:
+                    # Initialize it first.
+                    scope_out = scope(api,export_dir,scope_name)
+                result = scope_out.add(mo)
+                print str(result)
+
+            # if save:
+                # if delete:
+                    # print " " + str(mo.getGuid()),
+                # print "  --> Saving to xml"
+                # write_to_xml(api,export_dir,[mo])
+
+            if delete or save:
+                to_process_mos.append(mo)
+                    
+            count=count+1 
+
+        if (dbConn is not None):
+            mo_data.close()
+            stmt.close()
+            dbConn.close()
+
+        if to_process_mos:
+            global output
+            output = Output()
+            to_process_mos.reverse()
+            mo_array = MO_Array(to_process_mos)
+            threads = []
+            # only create enough threads needed
+            if len(to_process_mos) < num_threads:
+                num_threads = len(to_process_mos)
+            for c in range(0, num_threads):
+                t = threading.Thread(target=worker, args=(mo_array,delete,save,print_laststored,))
+                t.start()
+                threads.append(t)
+
+            for t in threads:
+                t.join()
+            
+        if scope_out is not None:
+            scope_out.save()
+    except SQLException, desc:
+        print "SQL Error: " 
+        print desc
+        warn = desc.getNextException()
+        if (warn is not None):
+          print "getNextException: " + warn.getMessage()
+    except SystemExit, desc:
+        # known exit
+        pass
+    except Exception, desc:
+        print "General error: " 
+        print desc
+        
+    sys.exit(0)
+
+
+
+#=====================================================================================
+#   MAIN
+#=====================================================================================
+
+if __name__ == "__main__":
+    main()
