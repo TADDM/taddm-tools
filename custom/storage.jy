@@ -30,109 +30,109 @@ from java.util import *
 from java.io import *
 
 class getEvents:
-	def getEvents( self,runId ):
-		property = System.getProperty("file.separator");
-		events = ArrayList(4);
-		fileName = Props.getHome() + property + Props.getDirectoryToStoreEvents() + property + runId + ".ser";
-		file = File(fileName);
-		if (file.exists()):
-			fileInputStream = FileInputStream(fileName);
-			ois = ObjectInputStream(fileInputStream);
-			while (1) :
-				try:
-					event = ois.readObject();
-					events.add(event);
-				except:
-					#print "end of file"
-					break
-			ois.close();
-		else:
-			print "RunID:  " + str(runId) + " Not Found!!!"
-			System.exit(1)
-		return events
+  def getEvents( self,runId ):
+    property = System.getProperty("file.separator");
+    events = ArrayList(4);
+    fileName = Props.getHome() + property + Props.getDirectoryToStoreEvents() + property + runId + ".ser";
+    file = File(fileName);
+    if (file.exists()):
+      fileInputStream = FileInputStream(fileName);
+      ois = ObjectInputStream(fileInputStream);
+      while (1) :
+        try:
+          event = ois.readObject();
+          events.add(event);
+        except:
+          #print "end of file"
+          break
+      ois.close();
+    else:
+      print "RunID:  " + str(runId) + " Not Found!!!"
+      System.exit(1)
+    return events
 
-	def getRunIDs( self):
-		property = System.getProperty("file.separator")
-		eventDirectory = Props.getHome() + property + Props.getDirectoryToStoreEvents() + property
-		idList = []
-		#print "Possible RunIDs: "
-		for f in java.io.File(eventDirectory).listFiles():
-			#print str(f)
-			run_id = str(f.getName()).split(".")[0]
-			idList.append(run_id)
+  def getRunIDs( self):
+    property = System.getProperty("file.separator")
+    eventDirectory = Props.getHome() + property + Props.getDirectoryToStoreEvents() + property
+    idList = []
+    #print "Possible RunIDs: "
+    for f in java.io.File(eventDirectory).listFiles():
+      #print str(f)
+      run_id = str(f.getName()).split(".")[0]
+      idList.append(run_id)
 
-		return  idList
+    return  idList
 
-	def getLatestID(self):
-		RunIDs = self.getRunIDs() 
-		RunIDs.sort()
-		id = RunIDs.pop()
-		return id
+  def getLatestID(self):
+    RunIDs = self.getRunIDs() 
+    RunIDs.sort()
+    id = RunIDs.pop()
+    return id
 
-	def printRunIDs(self):
-		# place the Highest Number in first
-		RunIDs = self.getRunIDs()
-		RunIDs.sort()
-		print "Listing available RunIDs"
-		for id in RunIDs:
-			print "    " + str(id)
-		return
-		
+  def printRunIDs(self):
+    # place the Highest Number in first
+    RunIDs = self.getRunIDs()
+    RunIDs.sort()
+    print "Listing available RunIDs"
+    for id in RunIDs:
+      print "    " + str(id)
+    return
+    
 def getDescription( event ):
-	try:
-		desc = event.getDescription()
-	except:
-		eventString = event.toString()
-		parts=eventString.split(";")
-		subparts=parts[7].split("!")
-		partsToChange = []
-		i = 0
-		for subpart in subparts:
-			if (subpart.find(".R.") > -1):
-				partsToChange.append(i-2)
-			i = i + 1
-		i = 0
-		newDescription = "";
-		for subpart in subparts:
-			if ( i > 0 ):
-				newDescription = newDescription + "!"
-			if ( i in partsToChange ):
-				newDescription = newDescription + "com.collation.discover.result.messages.DiscoverResultLocalizedMessages"
-			else:
-				newDescription = newDescription + subpart
-			i = i + 1
+  try:
+    desc = event.getDescription()
+  except:
+    eventString = event.toString()
+    parts=eventString.split(";")
+    subparts=parts[7].split("!")
+    partsToChange = []
+    i = 0
+    for subpart in subparts:
+      if (subpart.find(".R.") > -1):
+        partsToChange.append(i-2)
+      i = i + 1
+    i = 0
+    newDescription = "";
+    for subpart in subparts:
+      if ( i > 0 ):
+        newDescription = newDescription + "!"
+      if ( i in partsToChange ):
+        newDescription = newDescription + "com.collation.discover.result.messages.DiscoverResultLocalizedMessages"
+      else:
+        newDescription = newDescription + subpart
+      i = i + 1
 
-		try:
-			desc = InterMessageUtils.getMessage(newDescription)
-		except:
-			import sys
-			print 'uncaught exception', sys.exc_type, sys.exc_value, sys.exc_traceback
-			desc = "Unknown"
-	return desc
+    try:
+      desc = InterMessageUtils.getMessage(newDescription)
+    except:
+      import sys
+      print 'uncaught exception', sys.exc_type, sys.exc_value, sys.exc_traceback
+      desc = "Unknown"
+  return desc
 
 def getName( event ):
-	try:
-		name = event.getAttributeName()
-	except:
-		name = "Unknown"
-	return name
+  try:
+    name = event.getAttributeName()
+  except:
+    name = "Unknown"
+  return name
 
 def getSensor( event ):
-	try:
-		name = event.getAttributeName()
-		sensor = name.split('(')[0]
-	except:
-		sensor = "Unknown"
-	return sensor
+  try:
+    name = event.getAttributeName()
+    sensor = name.split('(')[0]
+  except:
+    sensor = "Unknown"
+  return sensor
 
 def convertMilliToString( millis ):
-	hours, ms = divmod(millis, 3600000)
-	min, ms = divmod(millis, 60000)
-	sec = float(millis) / 1000
-	sec = sec - (min * 60)
-	min = min - (hours * 60)
-	return "%i:%02i:%06.3f" % (hours, min, sec)
-		
+  hours, ms = divmod(millis, 3600000)
+  min, ms = divmod(millis, 60000)
+  sec = float(millis) / 1000
+  sec = sec - (min * 60)
+  min = min - (hours * 60)
+  return "%i:%02i:%06.3f" % (hours, min, sec)
+    
 def usage():
     print """ \
 
@@ -151,78 +151,89 @@ RunID --  A specific RunID. (use 'list' to see what's available)
 """
 
 if __name__=='__main__':
-	
-	try:
+  
+  try:
 
-		if sys.argv[1] == "list":
-			t = getEvents()
-			t.printRunIDs()
-			System.exit(1)
-		elif sys.argv[1] == "latest":
-			t = getEvents()
-			RunID = t.getLatestID()
-		elif sys.argv[1]:
-			# if its anything else, we call it TRUE...
-			RunID = sys.argv[1]
-			t = getEvents()
-		else:
-			usage()
-			System.exit(1)
-	except:
-			usage()
-			System.exit(1)
+    if sys.argv[1] == "list":
+      t = getEvents()
+      t.printRunIDs()
+      System.exit(1)
+    elif sys.argv[1] == "latest":
+      t = getEvents()
+      RunID = t.getLatestID()
+    elif sys.argv[1]:
+      # if its anything else, we call it TRUE...
+      RunID = sys.argv[1]
+      t = getEvents()
+    else:
+      usage()
+      System.exit(1)
+  except:
+      usage()
+      System.exit(1)
 
-	s = t.getEvents( RunID )
-	it = s.iterator()
-	bysensor = {}
-	totals = {}
-	numsensors = {}
-	total = 0
-	# iterate over all events and look for storage events
-	while it.hasNext() :
-		event= it.next()
-		
-		sensor = getSensor( event )
-		name = getName( event )
-		dt = event.getTimeStamp()
-		desc = getDescription( event )
-		if desc != None:
-			desc = desc.replace('\n', ' ')
-		
-		if desc.startswith('Stored -') or desc.startswith('Storing '):
-			
-			# for debugging
-			#s = '\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
-			#print s
-			
-			if bysensor.has_key(name):
-				# this should be the "stored" desc
-				storing = bysensor[name]
-				if totals.has_key(sensor):
-					totals[sensor] = totals[sensor] + (dt - storing)
-				else:
-					totals[sensor] = dt - storing
-				if numsensors.has_key(sensor):
-					numsensors[sensor] = numsensors[sensor] + 1
-				else:
-					numsensors[sensor] = 1
-				del bysensor[name] # clear out this sensor in case it stores something else
-				#print 'calculated storage time for ' + sensor + ' to be ' + totals[sensor].toString()
-			else:
-				# this should be the "storing" desc
-				bysensor[name] = dt
+  s = t.getEvents( RunID )
+  it = s.iterator()
+  bysensor = {}
+  totals = {}
+  numsensors = {}
+  longest = {} # longest storing sensor run by sensor type
+  total = 0
+  # iterate over all events and look for storage events
+  while it.hasNext() :
+    event= it.next()
+    
+    sensor = getSensor( event )
+    name = getName( event )
+    dt = event.getTimeStamp()
+    desc = getDescription( event )
+    if desc != None:
+      desc = desc.replace('\n', ' ')
+    
+    if desc.startswith('Stored -') or desc.startswith('Storing '):
+      
+      # for debugging
+      #s = '\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
+      #print s
+      
+      if bysensor.has_key(name):
+        # this should be the "stored" desc
+        millis = dt - bysensor[name] # storage time in milliseconds
+        if totals.has_key(sensor):
+          totals[sensor] = totals[sensor] + millis
+        else:
+          totals[sensor] = millis
+        if numsensors.has_key(sensor):
+          numsensors[sensor] = numsensors[sensor] + 1
+        else:
+          numsensors[sensor] = 1 # first of this type of sensor
+        
+        # store longest running instance
+        if longest.has_key(sensor):
+          if longest[sensor][1] < millis:
+            longest[sensor] = name, millis
+        else:
+          longest[sensor] = name, millis # record longest running of this sensor type
+          
+        del bysensor[name] # clear out this sensor in case it stores something else
+        #print 'calculated storage time for ' + sensor + ' to be ' + totals[sensor].toString()
+      else:
+        # this should be the "storing" desc
+        bysensor[name] = dt
 
     # TODO test when a storage error occurs to see how that is handled
                 
-	# print header
-	print 'Sensor,Instances,Total(ms),Total(hr:min:sec.ms),Average(ms),Average(hr:min:sec.ms)'
+  # print header
+  print 'Sensor,Instances,Total(ms),Total(hr:min:sec.ms),Average(ms),Average(hr:min:sec.ms),Longest,Longest(hr:min:sec.ms)'
 
-	# iterate over results and print summaries
-	keylist = totals.keys()
-	keylist.sort()
-	for k in keylist:
-		# get value for key
-		v = totals[k]
-		n = numsensors[k]
-		avg = v/n
-		print k + ',' + str(n) + ',' + str(v) + ',' + convertMilliToString(v) + ',' + str(avg) + ',' + convertMilliToString(avg)
+  # iterate over results and print summaries
+  keylist = totals.keys()
+  keylist.sort()
+  for k in keylist:
+    # get value for key
+    v = totals[k]
+    n = numsensors[k]
+    avg = v/n
+    longestSensor = str(longest[k][0])
+    longestTime = convertMilliToString(longest[k][1])
+    print k + ',' + str(n) + ',' + str(v) + ',' + convertMilliToString(v) + ',' + str(avg) + ',' + convertMilliToString(avg) + ',' + longestSensor + ',' + longestTime
