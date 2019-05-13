@@ -19,4 +19,4 @@
 @REM **************************** End Standard Header *******************************
 
 
-@call ..\bin\jython_coll.bat exportevents.jy %*
+@call ..\bin\jython_coll_253.bat disco_errors.jy %*
