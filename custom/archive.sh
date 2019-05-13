@@ -32,13 +32,13 @@ SKIPFAILED=2
 
 # if properties file exists use values
 if [ -e $ARCHIVEPROPS ]; then
-    AGE=`awk -F= '/archive.age/ {print $2}' $ARCHIVEPROPS`
-    LIMIT=`awk -F= '/archive.limit/ {print $2}' $ARCHIVEPROPS`
-    DELETE=`awk -F= '/archive.delete/ {print $2}' $ARCHIVEPROPS`
-    EMAIL=`awk -F= '/archive.email/ {print $2}' $ARCHIVEPROPS`
-    ARCHIVEDELETEAFTER=`awk -F= '/archive.cleanup/ {print $2}' $ARCHIVEPROPS`
-    SKIPZOS=`awk -F= '/archive.skipzos/ {print $2}' $ARCHIVEPROPS`
-    SKIPFAILED=`awk -F= '/archive.skipfailed/ {print $2}' $ARCHIVEPROPS`
+    AGE=`awk -F= '/^archive.age/ {print $2}' $ARCHIVEPROPS`
+    LIMIT=`awk -F= '/^archive.limit/ {print $2}' $ARCHIVEPROPS`
+    DELETE=`awk -F= '/^archive.delete/ {print $2}' $ARCHIVEPROPS`
+    EMAIL=`awk -F= '/^archive.email/ {print $2}' $ARCHIVEPROPS`
+    ARCHIVEDELETEAFTER=`awk -F= '/^archive.cleanup/ {print $2}' $ARCHIVEPROPS`
+    SKIPZOS=`awk -F= '/^archive.skipzos/ {print $2}' $ARCHIVEPROPS`
+    SKIPFAILED=`awk -F= '/^archive.skipfailed/ {print $2}' $ARCHIVEPROPS`
 else
     echo "Properties file $ARCHIVEPROPS not found, using defaults"
 fi
