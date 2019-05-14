@@ -1729,9 +1729,9 @@ class Output(object):
                     display_name=None
 
             if print_laststored == True:
-                print "%32s %30s %20s" % (mo.getGuid(), display_name, mo.getLastStoredTime())
+                print "%32s %30s %20s" % (mo.getGuid(), display_name.encode('utf-8'), mo.getLastStoredTime())
             else:
-                print "%32s %30s" % (mo.getGuid(), display_name)
+                print "%32s %30s" % (mo.getGuid(), display_name.encode('utf-8'))
         finally:
             self.lock.release()
 
