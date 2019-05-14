@@ -144,9 +144,10 @@ def convertMilliToString( millis ):
 def usage():
     print """ \
 
-Usage : runtime.jy [list|latest|RunID]
+Usage : runtime_noto.jy [list|latest|RunID]
 
 This program displays summary information about discovery runtime for a discovery run.
+This program does not include sensor statistics for sensor runs that time out
 This needs a run id (unique id for a discovery) as an argument.
 
 Arguments:
@@ -204,7 +205,7 @@ if __name__=='__main__':
       if desc != None:
         desc = desc.replace('\n', ' ')
 
-      if desc.startswith('The discovery process has started.') or desc.startswith('Discovered: ') or sev == 'critical':
+      if desc.startswith('The discovery process has started.') or desc.startswith('Discovered: ') or ( sev == 'critical' and 'A sensor timeout error has occurred.' not in desc ):
         
         # for debugging
         #s = '\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
