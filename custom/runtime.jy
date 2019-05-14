@@ -25,6 +25,7 @@ import traceback
 
 from com.collation.platform.util import Props
 from com.collation.discover.util import InterMessageUtils
+from com.collation.monitor.agent import Severity
 from java.lang import *
 from java.util import *
 from java.io import *
@@ -110,6 +111,13 @@ def getDescription( event ):
       desc = "Unknown"
   return desc
 
+def getSeverity( event ):
+	try:
+		severity = Severity.getDescription( event.getNewSeverity() )
+	except:
+		severity = "Unknown"
+	return severity
+
 def getName( event ):
   try:
     name = event.getAttributeName()
@@ -183,21 +191,22 @@ if __name__=='__main__':
   while it.hasNext() :
     event= it.next()
     
+    sev = getSeverity( event )
     sensor = getSensor( event )
     name = getName( event )
     dt = event.getTimeStamp()
     desc = getDescription( event )
     if desc != None:
       desc = desc.replace('\n', ' ')
-    
-    if desc.startswith('The discovery process has started.') or desc.startswith('Discovered: '):
+
+    if desc.startswith('The discovery process has started.') or desc.startswith('Discovered: ') or sev == 'critical':
       
       # for debugging
       #s = '\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
       #print s
       
       if bysensor.has_key(name):
-        # this should be the "Discovered: " desc
+        # this should be the "Discovered: " desc or a critical error
         millis = dt - bysensor[name] # run time in milliseconds
         if totals.has_key(sensor):
           totals[sensor] = totals[sensor] + millis
