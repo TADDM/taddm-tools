@@ -204,7 +204,7 @@ if __name__=='__main__':
       if desc != None:
         desc = desc.replace('\n', ' ')
 
-      if desc.startswith('The discovery process has started.') or desc.startswith('Discovered: ') or sev == 'critical':
+      if desc.startswith('The discovery process has started.') or desc.startswith('Discovered: ') or ( sev == 'critical' and 'A sensor timeouterror has occurred.' not in desc ):
         
         # for debugging
         #s = '\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
