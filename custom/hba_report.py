@@ -180,19 +180,19 @@ if __name__=='__main__':
   try:
 
     if sys.argv[1] == "list":
-      t = getEvents()
-      t.printRunIDs()
+      events = getEvents()
+      events.printRunIDs()
       System.exit(1)
     elif sys.argv[1] == "latest":
-      t = getEvents()
-      RunID = [t.getLatestID()]
+      events = getEvents()
+      RunID = [events.getLatestID()]
     elif sys.argv[1] == "all":
-      t = getEvents()
-      RunID = t.getRunIDs()
+      events = getEvents()
+      RunID = events.getRunIDs()
     elif sys.argv[1]:
       # if its anything else, we call it TRUE...
       RunID = [sys.argv[1]]
-      t = getEvents()
+      events = getEvents()
     else:
       usage()
       System.exit(1)
@@ -204,7 +204,7 @@ if __name__=='__main__':
   good = {}
   indifferent = {}
   for id in RunID:
-    s = t.getEvents( id )
+    s = events.getEvents( id )
     it = s.iterator()
     bysensor = {}
     # iterate over all events and look for storage events
