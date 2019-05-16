@@ -22,10 +22,13 @@
 import sys
 import java
 import traceback
+import re
 
 from com.collation.platform.util import Props
 from com.collation.discover.util import InterMessageUtils
 from com.collation.monitor.agent import Severity
+from com.collation.proxy.api.client import *
+from com.ibm.cdb.api import ApiFactory
 from java.lang import *
 from java.util import *
 from java.io import *
@@ -266,7 +269,13 @@ if __name__=='__main__':
       else:
         print "UNKNOWN EVENT TYPE FOUND..."
         print t
-      
+  
+  userid = 'administrator'
+  password = 'collation'
+  conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
+  sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
+  api = sess.createCMDBApi()
+
   # iterate over all bad events, sort by IP before iteration
   keylist = bad.keys()
   keylist.sort()
@@ -277,14 +286,26 @@ if __name__=='__main__':
     host = v[0]
     #severity = v[2]
     # skip session sensor failures where snmpmib2 was successful
-    if sensor == 'SessionSensor' and severity == 'critical' and good.has_key('SnmpMib2Sensor(' + ip + ')'):
+    # if sensor == 'SessionSensor' and severity == 'critical' and good.has_key('SnmpMib2Sensor(' + ip + ')'):
       #print 'found good snmp for bad session...'
       #print good['SnmpMib2Sensor(' + ip + ')']
-      continue
+      # continue
     name = v[3]
     dt = v[4]
     desc = v[5]
     ip = v[6]
+    
+    mql_query = "select * from ComputerSystem where virtual and exists ( ipInterfaces.ipAddress.stringNotation == '" + ip + "' )"
+    mo_data = api.executeQuery(str(mql_query), 0 , None, None)
+    
+    if mo_data.next():
+      # target is virtual, HBA failure expected
+      continue
+
     #s = '\"' + sensor + '\",\"' + host + '\",\"' + dt.toString() + '\",\"' + name + '\",\"' + severity + '\",\"' + desc + '\"'
     s = '\"' + host + '\",\"' + ip + '\",\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
     print s
+    
+  api.close()
+  sess.release()
+  conn.release()
