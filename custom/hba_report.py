@@ -112,11 +112,11 @@ def getDescription( event ):
   return desc
 
 def getSeverity( event ):
-	try:
-		severity = Severity.getDescription( event.getNewSeverity() )
-	except:
-		severity = "Unknown"
-	return severity
+  try:
+    severity = Severity.getDescription( event.getNewSeverity() )
+  except:
+    severity = "Unknown"
+  return severity
 
 def getName( event ):
   try:
@@ -134,19 +134,19 @@ def getSensor( event ):
   return sensor
 
 def getHostName( event ):
-	try:
-		hostname = event.getDetails().getHostName()
-	except:
-		hostname = "Unknown"
-	return hostname
+  try:
+    hostname = event.getDetails().getHostName()
+  except:
+    hostname = "Unknown"
+  return hostname
   
 def getIp( event ):
-	try:
-		name = event.getAttributeName()
-		ip = re.findall( r'[0-9]+(?:\.[0-9]+){3}', name )[0]
-	except:
-		ip = "Unknown"
-	return ip
+  try:
+    name = event.getAttributeName()
+    ip = re.findall( r'[0-9]+(?:\.[0-9]+){3}', name )[0]
+  except:
+    ip = "Unknown"
+  return ip
 
 def convertMilliToString( millis ):
   hours, ms = divmod(millis, 3600000)
@@ -202,6 +202,7 @@ if __name__=='__main__':
 
   bad = {}
   good = {}
+  indifferent = {}
   for id in RunID:
     s = t.getEvents( id )
     it = s.iterator()
@@ -266,24 +267,24 @@ if __name__=='__main__':
         print "UNKNOWN EVENT TYPE FOUND..."
         print t
       
-	# iterate over all bad events, sort by IP before iteration
-	keylist = bad.keys()
-	keylist.sort()
-	for k in keylist:
-		# get value for key
-		v = bad[k]
-		sensor = v[1]
-		host = v[0]
-		#severity = v[2]
-		# skip session sensor failures where snmpmib2 was successful
-		if sensor == 'SessionSensor' and severity == 'critical' and good.has_key('SnmpMib2Sensor(' + ip + ')'):
-			#print 'found good snmp for bad session...'
-			#print good['SnmpMib2Sensor(' + ip + ')']
-			continue
-		name = v[3]
-		dt = v[4]
-		desc = v[5]
-		ip = v[6]
-		#s = '\"' + sensor + '\",\"' + host + '\",\"' + dt.toString() + '\",\"' + name + '\",\"' + severity + '\",\"' + desc + '\"'
-		s = '\"' + host + '\",\"' + ip + '\",\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
-		print s
+  # iterate over all bad events, sort by IP before iteration
+  keylist = bad.keys()
+  keylist.sort()
+  for k in keylist:
+    # get value for key
+    v = bad[k]
+    sensor = v[1]
+    host = v[0]
+    #severity = v[2]
+    # skip session sensor failures where snmpmib2 was successful
+    if sensor == 'SessionSensor' and severity == 'critical' and good.has_key('SnmpMib2Sensor(' + ip + ')'):
+      #print 'found good snmp for bad session...'
+      #print good['SnmpMib2Sensor(' + ip + ')']
+      continue
+    name = v[3]
+    dt = v[4]
+    desc = v[5]
+    ip = v[6]
+    #s = '\"' + sensor + '\",\"' + host + '\",\"' + dt.toString() + '\",\"' + name + '\",\"' + severity + '\",\"' + desc + '\"'
+    s = '\"' + host + '\",\"' + ip + '\",\"' + dt.toString() + '\",\"' + name + '\",\"' + desc + '\"'
+    print s
