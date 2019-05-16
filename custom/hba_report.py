@@ -219,7 +219,7 @@ if __name__=='__main__':
       name = getName( event )
       ip = getIp( event )
       host = getHostName( event )
-      dt = event.getTimeStamp()
+      dt = Date( event.getTimeStamp() )
       desc = getDescription( event )
       if desc != None:
         desc = desc.replace('\n', ' ')
