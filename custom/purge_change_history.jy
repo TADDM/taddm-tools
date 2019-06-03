@@ -1,0 +1,301 @@
+#!/usr/bin/env ../bin/jython_coll_253
+
+######################### Begin Standard Header ################################
+#
+# SCRIPT OVERVIEW (This section would be used by doc gnerators)
+#
+# purge_change_history.py -- This script is used to purge old change history data
+#
+# DESCRIPTION:
+#
+# Authors: Mat Davis
+#   mdavis5@us.ibm.com
+#
+# History:
+#    Version 0.8 -- 01/2019 -- Added chunking logic for cause records -- mdavis5
+#    Version 0.7 -- 04/2015 -- Upgraded Jython version, added more logging -- mdavis5
+#    Version 0.6 -- 06/2013 -- Updated to make direct DB calls -- mdavis5
+#    Version 0.5 -- 11/2011 -- Initial Version -- mdavis5
+#
+############################# End Standard Header ##############################
+
+########################################################
+# Standard Jython/Python Library Imports
+########################################################
+import sys
+import java
+
+########################################################
+# Additional from Java imports
+########################################################
+from java.sql import DriverManager
+from java.sql import Statement
+from java.sql import SQLException
+from java.lang import Exception
+from java.lang import Class
+from java.lang import System
+#from java.util import Properties
+from java.lang import Boolean
+
+########################################################
+# Set the Path information
+########################################################
+coll_home = System.getProperty("com.collation.home")
+#System.setProperty("jython.home",coll_home + "/external/jython-2.1")
+#System.setProperty("python.home",coll_home + "/external/jython-2.1")
+System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
+System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
+
+jython_home = System.getProperty("jython.home")
+sys.path.append(jython_home + "/Lib")
+sys.path.append(coll_home + "/lib/sensor-tools")
+sys.prefix = jython_home + "/Lib"
+
+from com.ibm.cdb.topomgr import TopologyManagerFactory
+from com.ibm.cdb.topomgr import TopomgrProps
+
+########################################################
+# More Standard Jython/Python Library Imports
+########################################################
+import traceback
+import string
+import re
+import jarray
+import os
+import getopt
+import pprint
+import time
+import random
+#datetime does not exist in Python 2.1
+#import datetime
+
+########################################################
+# Some default GLOBAL Values (Typically these should be in ALL CAPS)
+# Jython does not have booleans
+########################################################
+True = 1
+False = 0
+
+########################
+# LogError      Error logger
+########################
+
+def LogError(msg):
+    print msg
+    (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+    traceback.print_exc(ErrorTB)
+
+def connectToDB(driver, url, user, password):
+    try:
+        cls = Class.forName(driver);
+        DriverManager.registerDriver(cls.newInstance())
+        conn = DriverManager.getConnection(url, user, password)
+        return conn
+    except SQLException, desc:
+        print "Cannot connect to database with the username: " +user
+        return None
+
+def usage():
+    print """ \
+Usage: purge_change_history.jy [OPTIONS] [-t, --test] -o, --older <date> | -d, --days <number of days>
+
+    Delete old change history
+
+    OPTIONS:
+    -h, --help Print this message
+
+
+    COMMAND-PARAMETERS:
+
+    -t, --test    The number of records to be deleted is printed, but the 
+                    deletes are not performed
+    -o, --older   <date> is in any common format and all change history
+                    records prior to that date will be deleted
+    -d, --days    <number of days> is an integer and all change history
+                    records older than that number of days will be
+                    deleted
+                    Note: a value of 0 will include all change history
+    """
+
+def days_to_time(days):
+    # Note, these are in SECONDS, TADDM timestamps are in MILLISECONDS (i.e. *1000)
+    now = time.time()
+    days_l = long(60*60*24*days)
+    # Convert to Milliseconds...
+    end_time =  (now - days_l)*1000
+    return end_time
+
+# convert date string to epoch
+def older_to_time(older):
+    from java.util import Date
+    from java.lang import IllegalArgumentException
+    try:
+        end_time = Date.parse(older)
+        return end_time
+    except IllegalArgumentException:
+        print '<date> format not acceptable'
+        sys.exit(1)
+
+def getRemainingRecords(conn, end_time):
+    stmt = conn.createStatement();
+    rs = stmt.executeQuery('SELECT COUNT(ID) FROM CHANGE_HISTORY_TABLE WHERE PERSIST_TIME < ' + str(long(end_time)))
+    remaining = 0
+    if rs.next():
+        remaining = rs.getString(1)
+    rs.close()
+    stmt.close()
+    rs = None # paranoia
+    stmt = None # paranoia
+    
+    return int(remaining)
+
+def getRemainingCauseRecords(conn):
+    stmt = conn.createStatement();
+    rs = stmt.executeQuery('SELECT COUNT(*) FROM CHANGE_CAUSE_TABLE WHERE CAUSE_ID NOT IN (SELECT ID FROM CHANGE_HISTORY_TABLE)')
+    remaining = 0
+    if rs.next():
+        remaining = rs.getString(1)
+    rs.close()
+    stmt.close()
+    rs = None # paranoia
+    stmt = None # paranoia
+    
+    return int(remaining)
+
+def main():
+    
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "hto:d:", ["help", "test", "older=", "days="] )
+    except getopt.GetoptError, err:
+        # print help information and exit:
+        print str(err) # will print something like "option -a not recognized"
+        usage()
+        sys.exit(2)
+    
+    days = None
+    older = None
+    test = False
+    for o, a in opts:
+        if o in ("-d", "--days"):
+            days = int(a)
+        elif o in ("-o", "--older"):
+            older = str(a)
+        elif o in ("-t", "--test"):
+            test = True
+        elif o in ("-h", "--help"):
+            usage()
+            sys.exit()
+        else:
+            assert False, "unhandled option"
+
+    # assert that days option is given
+    if (days is None and older is None):
+        usage()
+        sys.exit()
+
+    chunkSize = '300000' # size of delete chunks, you can change this value for your environment
+    
+    try:
+        props = TopologyManagerFactory.getProps()
+        conn = connectToDB(props.getDbDriver(), props.getDbUrl(), props.getDbUser(), props.getDbPassword())
+        dbProdName = conn.getMetaData().getDatabaseProductName()
+        if conn != None:
+            if days is not None:
+                end_time = days_to_time(days)
+                change_history_query = "DELETE FROM CHANGE_HISTORY_TABLE"
+                if days == 0:
+                    sql_query = change_history_query
+                else:
+                    sql_query = 'DELETE FROM CHANGE_HISTORY_TABLE WHERE ID IN ( SELECT ID FROM CHANGE_HISTORY_TABLE WHERE PERSIST_TIME < ' + str(long(end_time))
+            else:
+                end_time = older_to_time(older)
+                sql_query = 'DELETE FROM CHANGE_HISTORY_TABLE WHERE ID IN ( SELECT ID FROM CHANGE_HISTORY_TABLE WHERE PERSIST_TIME < ' + str(long(end_time))
+
+            # change row fetch according to database type
+            if dbProdName.upper().find('DB2') == -1:
+                # use Oracle query
+                if days is not None and days == 0:
+                    sql_query = sql_query + ' WHERE ROWNUM <= ' + chunkSize
+                else:
+                    sql_query = sql_query + ' AND ROWNUM <= ' + chunkSize + ' )'
+            else:
+                # use DB2 query
+                if days is not None and days == 0:
+                    sql_query = sql_query + ' FETCH FIRST ' + chunkSize + ' ROWS ONLY'
+                else:
+                    sql_query = sql_query + ' FETCH FIRST ' + chunkSize + ' ROWS ONLY )'
+                
+            remainingCount = getRemainingRecords(conn, end_time)
+            print 'Number of old change history records:',remainingCount
+            if not test:
+                print
+                print 'SQL query for looping delete: ' + sql_query
+                print
+                print 'Deleting records.'
+                while remainingCount > 0:
+
+                    #datetime doesn't exist in Python 2.1
+                    #print datetime.datetime.now(),'Deleting chunk'
+                    print time.strftime('%Y-%m-%d %H:%M:%S'),'Deleting chunk'
+                    stmt2 = conn.createStatement()
+                    res = stmt2.execute(sql_query)
+                    if res != 0:
+                        print "***WARNING*** Execution result",res
+                    stmt2.close()
+                    stmt2 = None # paranoia
+                    
+                    remainingCount = getRemainingRecords(conn, end_time)
+                print time.strftime('%Y-%m-%d %H:%M:%S'),'Change history record purge complete'
+
+            sql_query = 'DELETE FROM CHANGE_CAUSE_TABLE WHERE CAUSE_ID IN (SELECT CAUSE_ID FROM CHANGE_CAUSE_TABLE WHERE CAUSE_ID NOT IN (SELECT ID FROM CHANGE_HISTORY_TABLE)'
+
+            # change row fetch according to database type
+            if dbProdName.upper().find('DB2') == -1:
+                # use Oracle query
+                sql_query = sql_query + ' AND ROWNUM <= ' + chunkSize + ')'
+            else:
+                # use DB2 query
+                sql_query = sql_query + ' FETCH FIRST ' + chunkSize + ' ROWS ONLY)'
+
+            if not test:
+                remainingCount = getRemainingCauseRecords(conn)
+                print 'Number of old change cause records:',remainingCount
+                print
+                print 'SQL query for looping delete: ' + sql_query
+                print
+                print 'Deleting records.'
+                while remainingCount > 0:
+
+                    #datetime doesn't exist in Python 2.1
+                    #print datetime.datetime.now(),'Deleting chunk'
+                    print time.strftime('%Y-%m-%d %H:%M:%S'),'Deleting chunk'
+                    stmt2 = conn.createStatement()
+                    res = stmt2.execute(sql_query)
+                    if res != 0:
+                        print "***WARNING*** Execution result",res
+                    stmt2.close()
+                    stmt2 = None # paranoia
+                    
+                    remainingCount = getRemainingCauseRecords(conn)
+                print time.strftime('%Y-%m-%d %H:%M:%S'),'Change cause record purge complete'
+                    
+            else:
+                print 'This is only a test, no records were deleted.'
+                
+    except SQLException, desc:
+        print "SQL Error: " 
+        print desc
+        warn = desc.getNextException()
+        if (warn is not None):
+            print "getNextException: " + warn.getMessage()
+    except Exception, desc:
+        print "General error: " 
+        print desc
+
+########################################################
+#   MAIN
+########################################################
+
+if __name__ == "__main__":
+    main()
+

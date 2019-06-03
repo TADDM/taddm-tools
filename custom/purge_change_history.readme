@@ -1,0 +1,83 @@
+TADDM Purge Change History Script (beta)
+
+--------------------------------------------------------------------------------
+ Release Information
+--------------------------------------------------------------------------------
+       
+       Product: TADDM Purge Change History Script
+Release Number: beta
+  Release Date: January, 2019
+
+--------------------------------------------------------------------------------
+ Description
+--------------------------------------------------------------------------------
+
+ TADDM keeps track of all changes to Configuration Items (CIs) through a change
+ history table in the database. As the system ages, this change history can 
+ build to levels that affect server and database performance. It is a best 
+ practice to purge old change history on a regular basis. This script helps
+ automate that process. 
+ 
+ After familiarizing yourself with the script, it is recommended that you set 
+ up a scheduled task once a week to purge change history older than 60 days. 
+ You can adjust this schedule and purge window according to your own 
+ requirements.
+ 
+ The script breaks up the the delete into chunks of 300k rows by default to
+ avoid database log space issues. This value may need to be adjusted for your
+ environment by editing the script.
+ 
+--------------------------------------------------------------------------------
+ What's New
+--------------------------------------------------------------------------------
+ 
+ - Added chunking logic for CHANGE_CAUSE_TABLE
+ 
+--------------------------------------------------------------------------------
+ Installation Notes
+--------------------------------------------------------------------------------
+
+ System Requirements
+ 	- TADDM 7.2.2.0+ and 7.3.0.0+
+    - Tested with DB2 and Oracle back-end
+	
+ Prerequisite
+	- It is recommended to do a database backup before testing the script
+    - This script locks tables so do not run discovery or ITIC while purging change history
+
+ Installation
+	1) Copy purge_change_history.jy to the dist/custom directory on the primary storage server
+       or domain server. For pre-7.3 TADDM, copy purge_change_history_v21.jy to dist/custom and 
+       rename to purge_change_history.jy (remove original file by that name). Create dist/custom if 
+       it does not exist.
+       For Windows, also copy purge_change_history.bat.
+	2) For Unix, change the user rights on the file with the following command:
+		chmod 754 purge_change_history.jy
+	3) Run purge_change_history.jy/.bat with no arguments to see usage (the first 
+	   run might be slow b/c all the jython libraries need to load)
+	
+	Note: You do NOT need to restart TADDM for this to take affect. In fact the
+	script can be run even when TADDM is stopped though the database must be 
+	running.
+	
+ Manifest
+ 	This release consists of the following items:
+ 	
+ 		- README (this file)
+ 		- Jython script (purge_change_history.jy)
+        - Jython script for pre-7.3 TADDM (purge_change_history_v21.jy)
+        - Batch wrapper script (purge_change_history.bat)
+
+--------------------------------------------------------------------------------
+ Known Problems and Workarounds
+--------------------------------------------------------------------------------
+
+ 1) Discovery or ITIC errors occur while purging change history
+    A) This script locks tables so do not run discovery or ITIC while purging change history
+ 
+--------------------------------------------------------------------------------
+ Troubleshooting
+--------------------------------------------------------------------------------
+ 
+ None
+ 
