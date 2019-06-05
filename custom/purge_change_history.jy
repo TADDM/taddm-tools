@@ -12,6 +12,7 @@
 #   mdavis5@us.ibm.com
 #
 # History:
+#    Version 0.9 -- 06/2019 -- Added max chunks -- mdavis5
 #    Version 0.8 -- 01/2019 -- Added chunking logic for cause records -- mdavis5
 #    Version 0.7 -- 04/2015 -- Upgraded Jython version, added more logging -- mdavis5
 #    Version 0.6 -- 06/2013 -- Updated to make direct DB calls -- mdavis5
@@ -194,7 +195,10 @@ def main():
         sys.exit()
 
     chunkSize = '300000' # size of delete chunks, you can change this value for your environment
+    numChunks = 1000     # set for maximum number of chunks
     
+    conn = None
+    stmt2 = None
     try:
         props = TopologyManagerFactory.getProps()
         conn = connectToDB(props.getDbDriver(), props.getDbUrl(), props.getDbUser(), props.getDbPassword())
@@ -221,7 +225,7 @@ def main():
             else:
                 # use DB2 query
                 if days is not None and days == 0:
-                    sql_query = sql_query + ' FETCH FIRST ' + chunkSize + ' ROWS ONLY'
+                    sql_query = sql_query + ' WHERE ID IN ( SELECT ID FROM CHANGE_HISTORY_TABLE FETCH FIRST ' + chunkSize + ' ROWS ONLY )'
                 else:
                     sql_query = sql_query + ' FETCH FIRST ' + chunkSize + ' ROWS ONLY )'
                 
@@ -232,19 +236,22 @@ def main():
                 print 'SQL query for looping delete: ' + sql_query
                 print
                 print 'Deleting records.'
-                while remainingCount > 0:
+                while remainingCount > 0 and numChunks > 0:
 
                     #datetime doesn't exist in Python 2.1
                     #print datetime.datetime.now(),'Deleting chunk'
                     print time.strftime('%Y-%m-%d %H:%M:%S'),'Deleting chunk'
+                    conn.setAutoCommit(False)
                     stmt2 = conn.createStatement()
                     res = stmt2.execute(sql_query)
                     if res != 0:
                         print "***WARNING*** Execution result",res
+                    conn.commit()
                     stmt2.close()
                     stmt2 = None # paranoia
                     
                     remainingCount = getRemainingRecords(conn, end_time)
+                    numChunks = numChunks - 1;
                 print time.strftime('%Y-%m-%d %H:%M:%S'),'Change history record purge complete'
 
             sql_query = 'DELETE FROM CHANGE_CAUSE_TABLE WHERE CAUSE_ID IN (SELECT CAUSE_ID FROM CHANGE_CAUSE_TABLE WHERE CAUSE_ID NOT IN (SELECT ID FROM CHANGE_HISTORY_TABLE)'
@@ -257,6 +264,8 @@ def main():
                 # use DB2 query
                 sql_query = sql_query + ' FETCH FIRST ' + chunkSize + ' ROWS ONLY)'
 
+            # all change cause records related to the change history records 
+            # deleted will be processed
             if not test:
                 remainingCount = getRemainingCauseRecords(conn)
                 print 'Number of old change cause records:',remainingCount
@@ -269,10 +278,12 @@ def main():
                     #datetime doesn't exist in Python 2.1
                     #print datetime.datetime.now(),'Deleting chunk'
                     print time.strftime('%Y-%m-%d %H:%M:%S'),'Deleting chunk'
+                    conn.setAutoCommit(False)
                     stmt2 = conn.createStatement()
                     res = stmt2.execute(sql_query)
                     if res != 0:
                         print "***WARNING*** Execution result",res
+                    conn.commit()
                     stmt2.close()
                     stmt2 = None # paranoia
                     
@@ -283,14 +294,23 @@ def main():
                 print 'This is only a test, no records were deleted.'
                 
     except SQLException, desc:
-        print "SQL Error: " 
+        print "SQL Error: "
         print desc
         warn = desc.getNextException()
-        if (warn is not None):
-            print "getNextException: " + warn.getMessage()
+        if warn is not None:
+          print "getNextException: " + warn.getMessage()
+        if conn != None:
+          conn.rollback()
     except Exception, desc:
         print "General error: " 
         print desc
+    
+    # clean up our mess
+    if stmt2 != None:
+      stmt2.close()
+    if conn != None:
+      conn.commit()
+      conn.close()
 
 ########################################################
 #   MAIN
