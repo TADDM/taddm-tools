@@ -1,0 +1,277 @@
+#!/usr/bin/env ../bin/jython_coll
+
+############### Begin Standard Header - Do not add comments here ###############
+# 
+# File:     %W%
+# Version:  %I%
+# Modified: %G% %U%
+# Build:    %R% %L%
+# 
+# Licensed Materials - Property of IBM
+# 
+# Restricted Materials of IBM
+# 
+# 5724-N55
+# 
+# (C) COPYRIGHT IBM CORP. 2007.  All Rights Reserved.
+# 
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+# 
+############################# End Standard Header ##############################
+
+
+import sys
+import java
+import getopt
+import os.path
+import time
+from java.sql import DriverManager
+from java.sql import Statement
+from java.sql import SQLException
+from java.lang import System
+from java.lang import Exception
+from java.lang import Class
+from java.lang import Boolean
+from com.collation.platform.ip import *
+from com.collation.platform.session import *
+from com.collation.platform.security.auth import *
+from com.ibm.cdb.topomgr import TopologyManagerFactory
+from com.ibm.cdb.topomgr import TopomgrProps
+
+# Some default GLOBAL Values (Typically these should be in ALL CAPS)
+False = Boolean(0)
+True = Boolean(1)
+
+def usage():
+    print """ \
+usage: dbmaint.jy [options] 
+
+   Run database maintenance for TADDM
+
+    Options:
+
+    --runstats          Run runstats only, skip reorg/rebuild. This can be run with TADDM online.
+                        Default is to run both runstats and reorg/rebuild.
+
+    --rebuild           Run reorg/rebuild only, skip runstats. This must be run offline, with TADDM stopped.
+                        If Oracle automatic runstats is enabled, then only rebuild should be run.
+                        Default is to run both runstats and reorg/rebuild.
+
+    -h                  print this message
+    """
+
+def connectToDB(driver, url, user, password):
+  print "Connect to database..."
+  try:
+    cls = Class.forName(driver);
+    DriverManager.registerDriver(cls.newInstance())
+    conn = DriverManager.getConnection(url, user, password)
+    return conn
+  except SQLException, desc:
+    print "Cannot connect to database with the username: " +user
+    return None
+
+# generates index rebuild statements for Oracle and executes statements
+def rebuildOracleIndexes(conn, dbUser):
+  try:
+    #
+    # rebuild index
+    #
+    stmt = conn.createStatement()
+    # generate rebuild statements
+    rs = stmt.executeQuery('select \'alter index ' + dbUser.upper() + '.\'||index_name||\' rebuild tablespace \'||tablespace_name||\';\' from dba_indexes where upper(owner) = \'' + dbUser.upper() + '\' and index_type not in (\'LOB\')')
+    rebuilds = []
+    while rs.next():
+      rebuilds.append(rs.getString(1))
+    rs.close()
+    stmt.close()
+    
+    # execute rebuild statements
+    stmt2 = conn.createStatement()
+    for rebuild in rebuilds:
+      print time.strftime('%Y-%m-%d %H:%M:%S'),rebuild
+      try:
+        res = stmt2.execute(rebuild[:-1])
+        if res != 0:
+          print "***WARNING*** Execution result",res
+      except SQLException, desc:
+        # user doesn't have auth to do build
+        if str(desc).find('ORA-20000') != -1:
+            print 'SQL Error:',desc
+        else:
+          raise
+    stmt2.close()
+  except SQLException, desc:
+    print "SQL Error: "
+    print desc
+    warn = desc.getNextException()
+    if (warn is not None):
+      print "getNextException: " + warn.getMessage()
+  except Exception, desc:
+    print "General error: " 
+    print desc
+
+# generates index rebuild statements for DB2 and executes statements
+def reorgDB2Tables(conn, dbUser):
+  try:
+    # reorg tables
+    stmt = conn.createStatement()
+    # generate reorg statements
+    rs = stmt.executeQuery('select \'reorg table \'|| CAST(RTRIM(creator) AS VARCHAR(40))||\'.\'||substr(name,1,60)||\';\' from sysibm.systables where creator = \'' + dbUser.upper() + '\' and type = \'T\' and name not in \'CHANGE_SEQ_ID\' order by 1')
+    reorgs = []
+    while rs.next():
+      reorgs.append(rs.getString(1))
+    rs.close()
+    stmt.close()
+    
+    # execute reorg statements
+    stmt2 = conn.createStatement()
+    for reorg in reorgs:
+      print time.strftime('%Y-%m-%d %H:%M:%S'),reorg
+      try:
+        res = stmt2.execute('call sysproc.admin_cmd (\'' + reorg[:-1] + '\')')
+        if res != 0:
+          print "***WARNING*** Execution result",res
+      except SQLException, desc:
+        # user doesn't have auth to do reorg on this table
+        if str(desc).find('SQLCODE=-2214, SQLSTATE=01H52') != -1:
+          print 'User does not have authorizations to reorg this table'
+          print 'SQL Error:',desc
+        else:
+          raise
+    stmt2.close()
+  except SQLException, desc:
+    print "SQL Error: "
+    print desc
+    warn = desc.getNextException()
+    if (warn is not None):
+      print "getNextException: " + warn.getMessage()
+  except Exception, desc:
+    print "General error: " 
+    print desc
+
+try:
+
+  try:
+    # using --reorg as a hidden option that is the same as --rebuild
+    opts, args = getopt.getopt(sys.argv[1:], 'h', ['help', 'runstats', 'rebuild', 'reorg'] )
+  except getopt.GetoptError, err:
+    # print help information and exit:
+    print str(err) # will print something like "option -a not recognized"
+    usage()
+    sys.exit(2)
+    
+  runstatsonly = False
+  rebuildonly = False
+  for o, a in opts:
+    if o == "--runstats":
+      runstatsonly = True
+    elif o == "--rebuild":
+      rebuildonly = True
+    elif o == "--reorg":
+      rebuildonly = True
+    elif o in ("-h", "--help"):
+      usage()
+      sys.exit()
+    else:
+      assert False, "unhandled option"
+
+  props = TopologyManagerFactory.getProps()
+  dbUser = props.getDbUser()
+  conn = connectToDB(props.getDbDriver(), props.getDbUrl(), dbUser, props.getDbPassword())
+  if conn != None:
+    
+    # database product name (DB2 or Oracle)
+    dbProdName = conn.getMetaData().getDatabaseProductName()
+
+    # skip this if only executing runstats
+    if runstatsonly is False:
+      if dbProdName.upper().find('DB2') == -1:
+        # Oracle
+        print '*** Rebuilding Oracle indexes for primary database user ***'
+        rebuildOracleIndexes(conn, dbUser)
+      else:
+        # DB2
+        print '*** Reorganizing DB2 tables for primary database user ***'
+        reorgDB2Tables(conn, dbUser)
+    
+    aDbUser = props.getArchiveDbUser()
+    aconn = connectToDB(props.getArchiveDbDriver(), props.getArchiveDbUrl(), aDbUser, props.getArchiveDbPassword())
+
+    # skip this if only executing runstats
+    if runstatsonly is False:
+      if dbProdName.upper().find('DB2') == -1:
+        # Oracle
+        print '*** Rebuilding Oracle indexes for secondary database user ***'
+        rebuildOracleIndexes(aconn, aDbUser)
+      else:
+        # DB2
+        print '*** Reorganizing DB2 tables for secondary database user ***'
+        reorgDB2Tables(aconn, aDbUser)
+    
+    #
+    # runstats
+    #
+    if rebuildonly is False:
+      stmt3 = conn.createStatement()
+      stmt4 = aconn.createStatement()
+      home = System.getProperty("com.collation.home")
+      # runstat commands need generated prior to script execution
+      runstatsfile = home + '/bin/TADDM_table_stats.sql'
+      if os.path.isfile(runstatsfile):
+        f = open(runstatsfile, 'r')
+        for line in f.readlines():
+          if line.startswith('runstats') or line.startswith('exec'):
+            if line.startswith('exec'):
+              line = line[4:]
+            line = line[:-2]
+            print time.strftime('%Y-%m-%d %H:%M:%S'),line
+            try:
+              if line.find('\''+dbUser+'\'') != -1:
+                if dbProdName.upper().find('DB2') == -1:
+                  # Oracle
+                  res = stmt3.execute('{call ' + line + '}')
+                else:
+                  # DB2
+                  res = stmt3.execute('call sysproc.admin_cmd (\'' + line + '\')')
+              else:
+                if dbProdName.upper().find('DB2') == -1:
+                  # Oracle
+                  res = stmt4.execute('{call ' + line + '}')
+                else:
+                  # DB2
+                  res = stmt4.execute('call sysproc.admin_cmd (\'' + line + '\')')
+              if res != 0:
+                print "***WARNING*** Execution result",res
+            except SQLException, desc:
+              # user doesn't have auth to do runstats on this table
+              if str(desc).find('ORA-20000') != -1:
+                print 'SQL Error:',desc
+              else:
+                raise
+        f.close()
+      else:
+        print '***ERROR*** Runstats file ' + runstatsfile + ' not found. Run dist/bin/gen_db_stats.jy, redirect stdout to dist/bin/TADDM_table_stats.sql, and try again.'
+        stmt3.close()
+        stmt4.close()
+        conn.close()
+        aconn.close()
+        System.exit(1)
+    
+      stmt3.close()
+      stmt4.close()
+    
+    conn.close()
+    aconn.close()
+    
+except SQLException, desc:
+    print "SQL Error: " 
+    print desc
+    warn = desc.getNextException()
+    if (warn is not None):
+      print "getNextException: " + warn.getMessage()
+except Exception, desc:
+    print "General error: " 
+    print desc
+System.exit(0)
