@@ -48,6 +48,7 @@ VERSION = "1.00"
 
 import sys 
 import java
+import time
 
 
 # from Java [additional imports - not sure why]...
@@ -221,7 +222,6 @@ if __name__ == "__main__":
         end_time =  (now - age_l)*1000
         
         scope = data.getModelObject(3)
-        print '#',scope.getName()
         if scope.hasElements():
             for element in scope.getElements():
                 verified = False
@@ -230,14 +230,19 @@ if __name__ == "__main__":
                 hosts = api.executeQuery('select name, storageExtent from ComputerSystem where exists ( ipInterfaces.displayName == \'' + scope + '\' )', 2, None, None)
                 if hosts.next():
                     host = hosts.getModelObject(2)
+                    #print str(host)
                     if host.hasStorageExtent():
+                        #print 'hasStorageExtent'
                         for se in host.getStorageExtent():
+                            #print str(se)
                             if get_class_name(se).endswith('SCSIVolume'):
+                                #print str(get_class_name(se))
+                                #print str(end_time)
                                 if end_time < se.getLastStoredTime():
                                     verified = True
                     if hosts.next():
                         print '***More than one result found for ' + scope
-                if verified:
+                if verified is True:
                     print 'Verified ' + scope
                 else:
                     print 'Not verified ' + scope
