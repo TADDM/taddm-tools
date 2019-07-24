@@ -34,11 +34,11 @@ DESCRIPTION:
 CAVEATS:
 
 Author:  Mat Davis
-         mdavis5@us.ibm.com
+     mdavis5@us.ibm.com
 
 History:  
 
-    Version 1.0  -- 2019/07 -- Initial Version
+  Version 1.0  -- 2019/07 -- Initial Version
 
 '''
 
@@ -73,6 +73,9 @@ from com.collation.platform.security.auth import *
 from com.collation.platform.logger import LogFactory
 from com.collation.proxy.api.client import *
 from com.ibm.cdb.api import ApiFactory
+from TaddmHelper import LogError
+from TaddmHelper import LogInfo
+from TaddmHelper import LogDebug
 
 # More Standard Jython/Python Library Imports
 
@@ -84,81 +87,67 @@ import os
 import getopt
 import pprint
 
-import org.xml.sax as sax
-import org.apache.xerces.parsers.DOMParser as domparser
-
-from java.io import StringReader
-
 False = Boolean(0)
 True = Boolean(1)
 
-#  We don't want any logging (or anything to show up on the screen right now...
-
-System.setProperty("com.collation.LogFile","check_vipr_vms.log")
+coll_home = System.getProperty('com.collation.home')
+System.setProperty("com.collation.LogFile",coll_home + "/log/check_vipr_vms.log")
 
 global log
 
 log = LogFactory.getLogger("check_vipr_vms")
 
 def usage():
-    print >> sys.stderr, ''' \
+  print >> sys.stderr, ''' \
 usage: checkViprVMs.py [options]
 
-    Options:
-    -u userid       User required to login to TADDM Server
-                    Defaults to 'administrator'
+  Options:
+  -u userid       User required to login to TADDM Server
+          Defaults to 'administrator'
 
-    -p password     Password for TADDM Server user
-                    Defaults to 'collation'
+  -p password     Password for TADDM Server user
+          Defaults to 'collation'
 
-    -h              print this message
+  -h              print this message
 
 '''
 
-########################
-# LogError      Error logger
-########################
-def LogError(msg):
-        log.error(msg)
-        (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
-        traceback.print_exc(ErrorTB)
+# message to show if there are hosts in scope that aren't properly discovered
+msg = '''\
+The following scope elements could not be verified as being successfully
+discovered via HostStorageSensor. These hosts are in ViPR and contain an RDM
+so they are important for storage mapping, reporting, and billing. Ensure the 
+following are true for each of the items:
 
-########################
-# LogInfo
-########################
-def LogInfo(msg):
-        log.info(msg)
-
-########################
-# LogDebug
-########################
-def LogDebug(msg):
-        log.debug(msg)
+   1) The IP is included in a scopeset that is in the normal periodic discoveries
+   2) Ensure that the correct anchor/gateway is used during discovery
+   3) The SessionSensor and HostStorageSensor run succesfully on the target host
+'''
 
 ########################
 # GetScope
 ########################
 def GetScope(element):
+  try:
+    # assume it's an IpAddressScope
+    scope = element.getIp()
+  except AttributeError:
     try:
-        # assume it's an IpAddressScope
-        scope = element.getIp()
+      # next try NetworkScope
+      scope = element.getIpAddress() + '/' + element.getSubnetMask()
     except AttributeError:
-        try:
-            # next try NetworkScope
-            scope = element.getIpAddress() + '/' + element.getSubnetMask()
-        except AttributeError:
-            try:
-                # finally IpRangeScope
-                scope = element.getStart() + '-' + element.getEnd()
-            except AttributeError:
-                pass
-    return scope
+      try:
+        # finally IpRangeScope
+        scope = element.getStart() + '-' + element.getEnd()
+      except AttributeError:
+        pass
+  return scope
 
 def get_class_name(model_object):
-    cn = model_object.__class__.__name__
-    real_class_name = cn.replace("Impl","")
-    return real_class_name
-    
+  cn = model_object.__class__.__name__
+  real_class_name = cn.replace("Impl","")
+  return real_class_name
+  
 #=====================================================================================
 #   MAIN 
 #=====================================================================================
@@ -168,89 +157,93 @@ if __name__ == "__main__":
 #
 # Handle the options
 #
-    try:    
-        opts, args = getopt.getopt(sys.argv[1:], "u:p:h", ["help"])
-    except getopt.GetoptError, err:
-        # print help information and exit:
-        print >> sys.stderr, str(err) # will print something like "option -a not recognized"
-        usage()
-        sys.exit(2)
-    userid = None
-    password = None
-    scopeset = None
-    for o, a in opts:
-        if o == "-u":
-            userid = a
-        elif o == "-p":
-            password = a
-        elif o in ("-h", "--help"):
-            usage() 
-            sys.exit()
-        else:   
-            assert False, "unhandled option"
+  try:    
+    opts, args = getopt.getopt(sys.argv[1:], "u:p:h", ["help"])
+  except getopt.GetoptError, err:
+    # print help information and exit:
+    print >> sys.stderr, str(err) # will print something like "option -a not recognized"
+    usage()
+    sys.exit(2)
+  userid = None
+  password = None
+  scopeset = None
+  for o, a in opts:
+    if o == "-u":
+      userid = a
+    elif o == "-p":
+      password = a
+    elif o in ("-h", "--help"):
+      usage() 
+      sys.exit()
+    else:   
+      assert False, "unhandled option"
 
-    scopeset = 'ViPR_VMs'
+  scopeset = 'ViPR_VMs'
+  
+  host = "localhost"       # we default to localhost, it COULD be changed but this script will run ON the TADDM Server
+
+  if userid is None: 
+    userid = "administrator"
+
+  if password is None: 
+    password = "collation"
+
+  res = CommandLineAuthManager.authorize(userid, password)
+  if res == 0 :
+    print >> sys.stderr, 'Authentication Failed!!!'
+    sys.exit(8);
+  else:
+    print >> sys.stderr, 'Authentication successful'
+
+  #print >> sys.stderr, '**** Querying scope set \'' + scopeset + '\' ****'
+
+  conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
+  sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
+  api = sess.createCMDBApi()
+
+  query = 'select name, elements from Scope where name == \'' + scopeset + '\''
+  data = api.executeQuery(query,3,None,None)
+  if data.next():
+    age = 14 #days
+    now = time.time()
+    age_l = long(60*60*24*age)
+    # Convert to Milliseconds...
+    end_time =  (now - age_l)*1000
     
-    host = "localhost"       # we default to localhost, it COULD be changed but this script will run ON the TADDM Server
-
-    if userid is None: 
-        userid = "administrator"
-
-    if password is None: 
-        password = "collation"
-
-    res = CommandLineAuthManager.authorize(userid, password)
-    if res == 0 :
-        print >> sys.stderr, 'Authentication Failed!!!'
-        sys.exit(8);
+    scope = data.getModelObject(3)
+    if scope.hasElements():
+      notverified = []
+      for element in scope.getElements():
+        verified = False
+        scope = GetScope(element)
+        #print scope + ',' + ':'.join([str(e) for e in excludes]) + ',' + element.getName()
+        q = 'select name, storageExtent from ComputerSystem where UUID is-not-null and serialNumber is-not-null and exists ( ipInterfaces.displayName == \'' + scope + '\' )'
+        hosts = api.executeQuery(q, 2, None, None)
+        if hosts.next():
+          host = hosts.getModelObject(2)
+          #print str(host)
+          if host.hasStorageExtent():
+            #print 'hasStorageExtent'
+            for se in host.getStorageExtent():
+              #print str(se)
+              if get_class_name(se).endswith('SCSIVolume'):
+                #print str(get_class_name(se))
+                #print str(end_time)
+                if end_time < se.getLastStoredTime():
+                  verified = True
+          if hosts.next():
+            print '***More than one result found for ' + scope
+        if verified is False:
+          #print 'Not verified ' + scope + '/' + element.getName()
+          notverified.append(scope + ',,' + element.getName())
+      
+      if len(notverified) > 0:
+        print >> sys.stderr, msg
+        for nv in notverified:
+          print >> sys.stderr, str(nv)
     else:
-        print >> sys.stderr, 'Authentication successful'
-
-    #print >> sys.stderr, '**** Querying scope set \'' + scopeset + '\' ****'
-
-    conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
-    sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
-    api = sess.createCMDBApi()
-
-    query = 'select name, elements from Scope where name == \'' + scopeset + '\''
-    data = api.executeQuery(query,3,None,None)
-    if data.next():
-        age = 14 #days
-        now = time.time()
-        age_l = long(60*60*24*age)
-        # Convert to Milliseconds...
-        end_time =  (now - age_l)*1000
-        
-        scope = data.getModelObject(3)
-        if scope.hasElements():
-            for element in scope.getElements():
-                verified = False
-                scope = GetScope(element)
-                #print scope + ',' + ':'.join([str(e) for e in excludes]) + ',' + element.getName()
-                hosts = api.executeQuery('select name, storageExtent from ComputerSystem where exists ( ipInterfaces.displayName == \'' + scope + '\' )', 2, None, None)
-                if hosts.next():
-                    host = hosts.getModelObject(2)
-                    #print str(host)
-                    if host.hasStorageExtent():
-                        #print 'hasStorageExtent'
-                        for se in host.getStorageExtent():
-                            #print str(se)
-                            if get_class_name(se).endswith('SCSIVolume'):
-                                #print str(get_class_name(se))
-                                #print str(end_time)
-                                if end_time < se.getLastStoredTime():
-                                    verified = True
-                    if hosts.next():
-                        print '***More than one result found for ' + scope
-                if verified is True:
-                    print 'Verified ' + scope
-                else:
-                    print 'Not verified ' + scope
-                          
-                
-        else:
-            print >> sys.stderr, scopeset + ' does not contain any scope elements'
-    else:
-        print >> sys.stderr, scopeset + ' not found'
-        sys.exit(1)
-    sys.exit(0)
+      print >> sys.stderr, scopeset + ' does not contain any scope elements'
+  else:
+    print >> sys.stderr, scopeset + ' not found'
+    sys.exit(1)
+  sys.exit(0)
