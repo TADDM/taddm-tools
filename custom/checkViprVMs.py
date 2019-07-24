@@ -98,7 +98,7 @@ global log
 log = LogFactory.getLogger("check_vipr_vms")
 
 def usage():
-  print >> sys.stderr, ''' \
+  print ''' \
 usage: checkViprVMs.py [options]
 
   Options:
@@ -163,7 +163,7 @@ if __name__ == "__main__":
     opts, args = getopt.getopt(sys.argv[1:], "u:p:h", ["help"])
   except getopt.GetoptError, err:
     # print help information and exit:
-    print >> sys.stderr, str(err) # will print something like "option -a not recognized"
+    print str(err) # will print something like "option -a not recognized"
     usage()
     sys.exit(2)
   userid = None
@@ -192,12 +192,12 @@ if __name__ == "__main__":
 
   res = CommandLineAuthManager.authorize(userid, password)
   if res == 0 :
-    print >> sys.stderr, 'Authentication Failed!!!'
+    print 'Authentication Failed!!!'
     sys.exit(8);
   #else:
-    #print >> sys.stderr, 'Authentication successful'
+    #print 'Authentication successful'
 
-  #print >> sys.stderr, '**** Querying scope set \'' + scopeset + '\' ****'
+  #print '**** Querying scope set \'' + scopeset + '\' ****'
 
   conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
   sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
@@ -240,19 +240,19 @@ if __name__ == "__main__":
           notverified.append(scope + ',,' + element.getName())
       
       if len(notverified) > 0:
-        print >> sys.stderr, msg
+        print msg
         for nv in notverified:
-          print >> sys.stderr, str(nv)
+          print str(nv)
       else:
-        print >> sys.stderr, 'All VMs with RDM have been successfully discovered in the last 14 days.'
+        print 'All VMs with RDM have been successfully discovered in the last 14 days.'
     else:
-      print >> sys.stderr, scopeset + ' does not contain any scope elements'
+      print scopeset + ' does not contain any scope elements'
   else:
     api.close()
     sess.close()
     conn.close()
 
-    print >> sys.stderr, scopeset + ' not found'
+    print scopeset + ' not found'
     sys.exit(1)
   api.close()
   sess.close()
