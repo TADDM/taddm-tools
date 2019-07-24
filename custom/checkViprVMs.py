@@ -115,13 +115,15 @@ usage: checkViprVMs.py [options]
 # message to show if there are hosts in scope that aren't properly discovered
 msg = '''\
 The following scope elements could not be verified as being successfully
-discovered via HostStorageSensor. These hosts are in ViPR and contain an RDM
-so they are important for storage mapping, reporting, and billing. Ensure the 
-following are true for each of the items:
+discovered via HostStorageSensor in the last 14 days. These hosts are in ViPR 
+and contain an RDM so they are important for storage mapping, reporting, and 
+billing. Ensure the following are true for each of the items:
 
    1) The IP is included in a scopeset that is in the normal periodic discoveries
    2) Ensure that the correct anchor/gateway is used during discovery
-   3) The SessionSensor and HostStorageSensor run succesfully on the target host
+   3) The HostStorageSensor runs succesfully on the target host
+   4) The serialNumber is properly discovered via the Linux/Windows sensor. Ensure
+      that dmidecode is in the sudoers file on Linux host targets.
 '''
 
 ########################
@@ -192,8 +194,8 @@ if __name__ == "__main__":
   if res == 0 :
     print >> sys.stderr, 'Authentication Failed!!!'
     sys.exit(8);
-  else:
-    print >> sys.stderr, 'Authentication successful'
+  #else:
+    #print >> sys.stderr, 'Authentication successful'
 
   #print >> sys.stderr, '**** Querying scope set \'' + scopeset + '\' ****'
 
@@ -217,7 +219,7 @@ if __name__ == "__main__":
         verified = False
         scope = GetScope(element)
         #print scope + ',' + ':'.join([str(e) for e in excludes]) + ',' + element.getName()
-        q = 'select name, storageExtent from ComputerSystem where UUID is-not-null and serialNumber is-not-null and exists ( ipInterfaces.displayName == \'' + scope + '\' )'
+        q = 'select name, storageExtent from ComputerSystem where signature is-not-null and serialNumber is-not-null and exists ( ipInterfaces.displayName == \'' + scope + '\' )'
         hosts = api.executeQuery(q, 2, None, None)
         if hosts.next():
           host = hosts.getModelObject(2)
@@ -241,9 +243,19 @@ if __name__ == "__main__":
         print >> sys.stderr, msg
         for nv in notverified:
           print >> sys.stderr, str(nv)
+      else:
+        print >> sys.stderr, 'All VMs with RDM have been successfully discovered in the last 14 days.'
     else:
       print >> sys.stderr, scopeset + ' does not contain any scope elements'
   else:
+    api.close()
+    sess.close()
+    conn.close()
+
     print >> sys.stderr, scopeset + ' not found'
     sys.exit(1)
+  api.close()
+  sess.close()
+  conn.close()
+
   sys.exit(0)
