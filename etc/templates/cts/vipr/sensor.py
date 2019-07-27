@@ -13,6 +13,7 @@ from java.io import *
 from java.util import *
 from java.security import *
 from java.io import StringReader
+from java.text import SimpleDateFormat
 
 import sys
 import java
@@ -93,7 +94,17 @@ def getValues(conn):
   return output
 
 def getSeriesValues(filter, properties):
-  conn = getConnection('https://' + ip + ':' + str(sslport) + '/APG-REST/metrics/series/values?limit=10000&' + filter + '&period=86400&' + properties)
+
+  sdf = SimpleDateFormat("yyyy-MM-dd")
+  currDateTime = Date()
+  c = Calendar.getInstance()
+  c.setTime(currDateTime)
+  c.add(5, -7)
+  endTime = str(sdf.format(currDateTime)) + 'T00:00:00'
+  startTime = str(sdf.format(c.getTime())) + 'T00:00:00'
+  url = ('https://' + ip + ':' + str(sslport) + '/APG-REST/metrics/series/values?limit=10000&' +
+         filter + '&period=86400&start=' + startTime + '&end=' + endTime '&' + properties)
+  conn = getConnection(url)
   return getValues(conn)
   
 def getPropertiesValues(filter, fields):
