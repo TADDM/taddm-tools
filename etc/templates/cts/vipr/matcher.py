@@ -5,6 +5,7 @@ import sys
 import java
 
 from java.lang import System
+from java.util import HashMap
 coll_home = System.getProperty("com.collation.home")
 
 System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython253_2.5.3/lib")
@@ -25,15 +26,24 @@ import sensorhelper
 log.debug("REST CTS result matcher script running")
 
 try:
-    log.debug("resultMap" + str(resultMap))
-    #  get list of ports discovered
-    log.debug('grabbing portList')
-    portList = resultMap['portList']
-    log.debug('Looking for port')
-    if 9431 in portList:
-      log.debug('Found port 9431')
-      returnList.add("ports", portList)
-    else:
-      log.debug('Port 9431 not found')
+  log.debug("resultMap" + str(resultMap))
+  #  get arrays discovered
+  arrays = resultMap['arrays']
+  #  get switches discovered
+  switches = resultMap['switches']
+
+  results = HashMap()
+  if len(arrays) > 0:
+    results.put('arrays', arrays)
+  else:
+    log.debug("No arrays found in resultMap")
+
+  if len(switches) > 0:
+    results.put('switches', switches)
+  else:
+    log.debug("No switches found in resultMap")
+
+  if results.size() > 0:
+    returnList.add("devices", results)
 except Exception, e:
-    log.error("Error occurred " + str(e))
+  log.error("Error occurred " + str(e))
