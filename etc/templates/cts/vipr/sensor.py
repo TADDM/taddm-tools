@@ -103,7 +103,7 @@ def getSeriesValues(filter, properties):
   endTime = str(sdf.format(currDateTime)) + 'T00:00:00'
   startTime = str(sdf.format(c.getTime())) + 'T00:00:00'
   url = ('https://' + ip + ':' + str(sslport) + '/APG-REST/metrics/series/values?limit=10000&' +
-         filter + '&period=86400&start=' + startTime + '&end=' + endTime '&' + properties)
+         filter + '&period=86400&start=' + startTime + '&end=' + endTime + '&' + properties)
   conn = getConnection(url)
   return getValues(conn)
   
@@ -143,7 +143,6 @@ def getArrayLuns():
   
 def getVirtualVolumes(device):
   #url_vvolumes = ('fields=vvol,lunwwn,partsn,isused,locality,cluster,array,ismapped,vendor,csgroup,cdev,partdesc,view,extent,ismasked,dgraid,psvclvl'+
-  # JSON parse hangs if all the fields are done, just a slow parsing issue
   # if you include psvclvl in the query it removes a vvol if the service level is null
   # view != 'N/A' filter is added to match results in ViPR UI
   fields = 'fields=device,vvol,psvclvl,partsn'
@@ -208,7 +207,138 @@ def padDiskNumber(diskname):
   else:
     log.info('Bad disk name (' + diskname + ') returning None')
     return None
+
+# for development purposes, skip storage of results that are not commented
+skipStorage = {}
+#skipStorage['VNX'] = True
+#skipStorage['RDM'] = True
+#skipStorage['VPlex'] = True
+#skipStorage['XtremIO'] = True
+#skipStorage['Unity'] = True
+#skipStorage['Switch'] = True
+
+def storeResult(mo, type):
+  if type in skipStorage: # skip storage if key listed
+    if skipStorage[type] is True:
+      skipStorage[type] = False # only print warning once
+      ctsResult.warning('DEVELOPER - Skipping storage of ' + type + ' objects')
+  else:
+    log.debug('Storing result: ' + str(mo))
+    ctsResult.addExtendedResult(mo)
+
+# get volume capacity and volume capacity used map for the array   
+def getVolumeCapacities(arraySerial, property, parttype = 'LUN'):
+  volumeCapMap = {}
+  volumeUsedCapMap = {}
+  try:
+    # only get values with units in GB b/c that is all we handle in this code
+    filter='filter=unit%3D%27GB%27%26(name%3D%27UsedCapacity%27%7Cname%3D%27Capacity%27)%26parttype%3D%27' + parttype + '%27%26serialnb%3D%27' + arraySerial + '%27'
+    properties='properties=name,unit,' + property
+    volumeCapOutput = getSeriesValues(filter, properties)
   
+    if volumeCapOutput:
+      volumeCaps = getParsedJsonArray(volumeCapOutput)
+      for volumeCap in volumeCaps:
+        points = volumeCap.getJsonArray('points')
+        if points and not points.isNull(0):
+          # get last point
+          point = points.getJsonArray(points.size()-1).getString(1)
+          properties = volumeCap.getJsonObject('properties')
+          unit = properties.getJsonString('unit').getString()
+          name = properties.getJsonString('name').getString()
+          keyStr = properties.getJsonString(property)
+          if keyStr:
+            key = keyStr.getString()
+            # code assumes everything is same unit
+            if name == 'Capacity':
+              volumeCapMap[key] = point
+            elif name == 'UsedCapacity':
+              volumeUsedCapMap[key] = point
+      #log.debug('volumeCapMap:' + str(volumeCapMap))
+      #log.debug('volumeUsedCapMap:' + str(volumeUsedCapMap))
+      if len(volumeCapMap) == 0 and len(volumeUsedCapMap) == 0:
+        msg = 'Volume capacity values not found for array with serial ' + arraySerial
+        log.warning(msg)
+        ctsResult.warning(msg)
+  except Exception, e:
+    msg = 'Error occurred during volume capacity query, capacity values not updated for ' + arraytyp + ' array ' + sss.getFqdn()
+    log.warning(msg)
+    log.info('Error : ' + str(e))
+    ctsResult.warning(msg)
+  return volumeCapMap, volumeUsedCapMap
+
+# set volume capacity and used capacity on the storage volume
+def setVolumeCapacity(sv, name, volumeCapMap, volumeUsedCapMap, blksize = 512):
+  if name in volumeCapMap:
+    cap = volumeCapMap[name]
+    if cap:
+      # assuming GB unit
+      cap = long(pow(1024,3)*float(cap)/long(blksize))
+      sv.setCapacity(cap)
+    if name in volumeUsedCapMap:
+      usedCap = volumeUsedCapMap[name]
+      if usedCap:
+        # assuming GB unit
+        usedCap = long(pow(1024,3)*float(usedCap)/long(blksize))
+        # sometimes ViPR shows used cap greater than capacity
+        if usedCap <= cap:
+          sv.setFreeSpace(cap-usedCap)
+        else:
+          # TODO should we make this negative if usedCap > cap
+          sv.setFreeSpace(long(0))
+
+def set_array_to_vplex(array, array_svolume, storage_tag):
+  array_vol_wwn = array_svolume.getManagedSystemName()
+  vdiskinfo = vdiskByLun[array_vol_wwn]
+  serialnb = vdiskinfo['serialnb']
+  vvol = vdiskinfo['vvol']
+  
+  if serialnb + vvol in uuidBySerialVol:
+    uuid = uuidBySerialVol[serialnb + vvol]
+    #log.debug('Processing connection from ' + uuid + ' and ' + array_vol_wwn)
+    vdiskByLunUsed.append(array_vol_wwn) # keep track of the ones used
+    
+    # create skinny array volume for storage performance
+    ssv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+    ssv.setManagedSystemName(array_vol_wwn)
+    
+    # create skinny volume for storage performance
+    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+    vsv.setManagedSystemName(uuid)
+
+    # create relationships
+    bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
+    bo.setSource(vsv)
+    bo.setTarget(ssv)
+    bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
+    vsv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
+    storeResult(vsv, storage_tag)
+    
+    realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
+    realizes.setSource(array_svolume)
+    realizes.setTarget(vsv)
+    realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
+    array_svolume.setRealizedBy(realizes) # this causes StorageError without MSN set on vsv
+    
+    if not serialnb in usesRelnAdded:
+      # uses relationship has not yet been added for this VPlex
+      # create skinny VPlex
+      vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
+      vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))
+      # create skinny array
+      skinny_array = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
+      skinny_array.setAnsiT10Id(array.getAnsiT10Id())
+      # create uses relation
+      uses = sensorhelper.newModelObject('cdm:relation.Uses')
+      uses.setSource(vplex)
+      uses.setTarget(skinny_array)
+      uses.setType('com.collation.platform.model.topology.relation.Uses')
+      storeResult(uses, storage_tag)
+      log.debug('Added Uses relationship for ' + serialnb + ' and ' + array.getSerialNumber())
+      usesRelnAdded.append(serialnb)
+  else:
+    log.warning('Could not find virtual volume: ' + serialnb + ' ' + vvol)
+     
 # ctsSeed is CustomTemplateSensorSeed with following methods
 # Map<String, Object> getResultMap()
 # CTSTemplate getTemplate()
@@ -218,7 +348,8 @@ def padDiskNumber(diskname):
 
 try:
   # if javax.json library has not been added to jre this will throw ImportError
-  # and we cant' continue unless it is available
+  # and we can't continue unless it is available
+  # https://docs.oracle.com/javaee/7/api/javax/json/package-summary.html
   from javax.json import *
   
   #log.debug(''.join(list(targets)))
@@ -260,6 +391,7 @@ try:
           output = getVPlexConnection()
 
           log.debug('### Response for getStorageSubSystem request:  -' + output)
+          global uuidBySerialVol
           uuidBySerialVol = {}
           if output:
             vplexes = getParsedJsonArray(output)
@@ -402,6 +534,7 @@ try:
             rdmByLunUsed = []
             hostPathsByLunUsed = []
             hostDisksByLunUsed = []
+            global usesRelnAdded
             # iterate over all VPlex
             for vplex in vplexes:
               usesRelnAdded = [] # track uses relationships defined
@@ -474,6 +607,10 @@ try:
               if vvolumeOutput:
                 vvolumes = getParsedJsonArray(vvolumeOutput)
                 members = []
+                
+                # query vvol capacity
+                volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'vvol', 'VirtualVolume')
+                
                 # iterate over all volumes
                 for vvolume in vvolumes:
                   log.debug('vvolume:' + str(vvolume))
@@ -489,6 +626,9 @@ try:
                   # have been using it all over the place as a hack, including for the basedOn StorageExtent for VMwareDataStore
                   vsv.setManagedSystemName(partsn)
                   uuidBySerialVol[sss.getSerialNumber() + vvol] = partsn
+                  
+                  # set vvol capacity
+                  setVolumeCapacity(vsv, vvol, volumeCapMap, volumeUsedCapMap)
                   
                   paths = []
                   if partsn in hostPathsByLun:
@@ -550,7 +690,6 @@ try:
                   if len(paths) > 0:
                     vsv.setHostPaths(sensorhelper.getArray(paths,'cdm:dev.SCSIPath'))
 
-                  # TODO volume capacity numbers are a separate query
                   members.append(vsv)
                   
                   # RDM disks
@@ -594,14 +733,13 @@ try:
                     bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
                     scsiVol.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
                     # log.debug('Defined SCSIVolume: ' + str(scsiVol) + ' parent: ' + str(parent) + ' basedOn: ' + str(bo))
-                    ctsResult.addExtendedResult(scsiVol)
+                    storeResult(scsiVol, 'RDM')
                     
                     realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
                     realizes.setSource(vsv)
                     realizes.setTarget(scsiVol)
                     realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
                     vsv.setRealizedBy(realizes) # this causes StorageError without MSN set on scsiVol
-                    # ctsResult.addExtendedResult(realizes)
                     
                     if not parent.getSerialNumber() in usesRelnAdded:
                       # uses relationship has not yet been added for this VM
@@ -615,18 +753,16 @@ try:
                       uses.setSource(parent)
                       uses.setTarget(ssss)
                       uses.setType('com.collation.platform.model.topology.relation.Uses')
-                      ctsResult.addExtendedResult(uses)
+                      storeResult(uses, 'RDM')
                       
                       #log.debug('Added Uses relationship for ' + parent.getSerialNumber() + ' and ' + sss.getSerialNumber())
                       
                       usesRelnAdded.append(parent.getSerialNumber())
-                    #else:
-                      #log.debug('Uses relationship already added for ' + parent.getSerialNumber() + ' and ' + sss.getSerialNumber())
                       
                 # ViPR sensor only sets members, not storageExtents
                 sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
-                  
-              ctsResult.addExtendedResult(sss)
+              
+              storeResult(sss, 'VPlex')
               discovered = True
             
             # print all rdmByLun not used
@@ -722,6 +858,7 @@ try:
           vDiskFields = 'fields=vdisk,lunwwn,vvol,serialnb,arraysn'
           vDiskFilter = 'filter=parttype%3D%27VirtualDisk%27%26devtype%3D%27VirtualStorage%27%26%21vvol%3D%27N/A%27%26vstatus%3D%27active%27'
           vdiskOutput = getPropertiesValues(vDiskFilter, vDiskFields)
+          global vdiskByLun
           vdiskByLun = {}
           if vdiskOutput:
             vdisks = getParsedJsonArray(vdiskOutput)
@@ -737,6 +874,7 @@ try:
               else:
                 vdiskByLun[lunwwn] = {'vdisk': vdisk, 'vvol': vvol, 'serialnb': serialnb, 'arraysn': arraysn}
           
+          global vdiskByLunUsed
           vdiskByLunUsed = []
           # enhance existing arrays
           for sss in arrays:
@@ -766,41 +904,7 @@ try:
                 volumes = getParsedJsonArray(volumeOutput)
                 
                 # cache capacities for all volumes
-                volumeCapMap = {}
-                volumeUsedCapMap = {}
-                try:
-                  # TODO add start/end time
-                  filter='filter=(name%3D%27UsedCapacity%27%7Cname%3D%27Capacity%27)%26parttype%3D%27LUN%27%26serialnb%3D%27' + sss.getSerialNumber() + '%27'
-                  properties='properties=name,partdesc,unit'
-                  volumeCapOutput = getSeriesValues(filter, properties)
-                
-                  if volumeCapOutput:
-                    volumeCaps = getParsedJsonArray(volumeCapOutput)
-                    for volumeCap in volumeCaps:
-                      points = volumeCap.getJsonArray('points')
-                      if points and not points.isNull(0):
-                        # TODO get last point
-                        point = points.getJsonArray(0).getString(1)
-                        properties = volumeCap.getJsonObject('properties')
-                        unit = properties.getJsonString('unit').getString()
-                        name = properties.getJsonString('name').getString()
-                        partdesc = properties.getJsonString('partdesc').getString()
-                        # TODO code assumes everything is same unit
-                        if name == 'Capacity':
-                          volumeCapMap[partdesc] = point
-                        elif name == 'UsedCapacity':
-                          volumeUsedCapMap[partdesc] = point
-                    #log.debug('volumeCapMap:' + str(volumeCapMap))
-                    #log.debug('volumeUsedCapMap:' + str(volumeUsedCapMap))
-                    if len(volumeCapMap) == 0 and len(volumeUsedCapMap) == 0:
-                      msg = 'Volume capacity values not found for ' + arraytyp + ' array ' + sss.getFqdn()
-                      log.warning(msg)
-                      ctsResult.warning(msg)
-                except Exception, e:
-                  msg = 'Error occurred during volume capacity query, capacity values not updated for ' + arraytyp + ' array ' + sss.getFqdn()
-                  log.warning(msg)
-                  log.info('Error : ' + str(e))
-                  ctsResult.warning(msg)
+                volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'partdesc')
                 
                 members = []
                 # iterate over all volumes
@@ -816,48 +920,21 @@ try:
                   sv.setName(partdesc)
                   sv.setLUN(int(partid))
                   sv.setBlockSize(long(512))
-                  # partsn is the WWN associated with the volume, don't know what to do with it yet
+                  # partsn is the WWN associated with the volume
+                  sv.setManagedSystemName(partsn)
                   
-                  if partdesc in volumeCapMap:
-                    cap = volumeCapMap[partdesc]
-                    # TODO assuming GB unit
-                    cap = long(pow(1024,3)*float(cap)/512)
-                    sv.setCapacity(cap)
-                    usedCap = volumeUsedCapMap[partdesc]
-                    if usedCap:
-                      # TODO assuming GB unit
-                      usedCap = long(pow(1024,3)*float(usedCap)/512)
-                      sv.setFreeSpace(cap-usedCap)
+                  setVolumeCapacity(sv, partdesc, volumeCapMap, volumeUsedCapMap)
                   
-                  # build scsi paths
-                  paths = []
-                  hostPaths = []
-                  for scsipath in scsipaths:
-                      lun_HEX = partdesc
-                      scsilunname = scsipath['LUN']
-                      if lun_HEX is None or lun_HEX == scsilunname:
-                        log.debug('lunname='+lun_HEX+'.equals('+scsilunname+')')
-                        log.debug(str(scsipath))
-                        
-                  # if partsn in disks:
-                    # log.debug('Found ' + partsn + ' in disks:' + str(disks[partsn]))
-                    # sPath = sensorhelper.newModelObject('cdm:dev.SCSIPath')
-                    # sPath.setArrayVolume(volume)
-                    # sPath.setLUN(int(partid))
-                    
-                    # targetPE = sensorhelper.newModelObject('cdm:dev.SCSIProtocolEndPoint')
-                    # #targetPE.setName(WorldWideNameUtils.toUniformString(partsn))
-                    # targetPE.setWorldWideName(WorldWideNameUtils.toUniformString(partsn))
-                    # sPath.setParent(targetPE)
-                    
-                    # paths.append(sPath)
-                    
-                  
+                  # check VPlex vdisks for connection to this LUN
+                  if partsn in vdiskByLun:
+                    #log.debug('Found matching wwn: ' + partsn)
+                    set_array_to_vplex(sss, sv, 'VNX')
+
                   members.append(sv)
                 # ViPR sensor only sets members, not storageExtents
                 sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
                 discovered = True
-                ctsResult.addExtendedResult(sss)
+                storeResult(sss, 'VNX')
               else:
                 log.debug('No volumes returned for ' + sss.getFqdn())
             elif arraytyp == 'XtremIO':
@@ -873,44 +950,7 @@ try:
               if volumeOutput:
                 volumes = getParsedJsonArray(volumeOutput)
                 
-                volumeCapMap = {}
-                volumeUsedCapMap = {}
-                try:
-                  # cache capacities for all volumes
-                  filter='filter=(name%3D%27UsedCapacity%27%7Cname%3D%27Capacity%27)%26parttype%3D%27LUN%27%26serialnb%3D%27' + sss.getSerialNumber() + '%27'
-                  properties='properties=name,volid,unit'
-                  volumeCapOutput = getSeriesValues(filter, properties)
-                  
-                  if volumeCapOutput:
-                    volumeCaps = getParsedJsonArray(volumeCapOutput)
-                    for volumeCap in volumeCaps:
-                      # log.debug('volumeCap:' + str(volumeCap))
-                      points = volumeCap.getJsonArray('points')
-                      if points and not points.isNull(0):
-                        point = points.getJsonArray(0).getString(1)
-                        properties = volumeCap.getJsonObject('properties')
-                        unit = properties.getJsonString('unit').getString()
-                        name = properties.getJsonString('name').getString()
-                        # sometimes there is no volid
-                        volidStr = properties.getJsonString('volid')
-                        if volidStr:
-                          volid = volidStr.getString()
-                          # TODO code assumes everything is same unit
-                          if name == 'Capacity':
-                            volumeCapMap[volid] = point
-                          elif name == 'UsedCapacity':
-                            volumeUsedCapMap[volid] = point
-                    #log.debug('volumeCapMap:' + str(volumeCapMap))
-                    #log.debug('volumeUsedCapMap:' + str(volumeUsedCapMap))
-                    if len(volumeCapMap) == 0 and len(volumeUsedCapMap) == 0:
-                      msg = 'Volume capacity values not found for ' + arraytyp + ' array ' + sss.getFqdn()
-                      log.warning(msg)
-                      ctsResult.warning(msg)
-                except Exception, e:
-                  msg = 'Error occurred during volume capacity query, capacity values not updated for ' + arraytyp + ' array ' + sss.getFqdn()
-                  log.warning(msg)
-                  log.info('Error : ' + str(e))
-                  ctsResult.warning(msg)
+                volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'volid')
                 
                 members = []
                 # iterate over all volumes
@@ -930,101 +970,21 @@ try:
                   sv.setName(part)
                   sv.setLUN(int(lun))
                   sv.setBlockSize(long(blksize))
-                  # use MSN for storageVolume to allow sv.setBasedOn(bo) below (a hack)
+                  # use MSN for storageVolume to allow sv.setBasedOn(bo) (a hack)
                   sv.setManagedSystemName(rootwwn)
-                   
-                  if volid in volumeCapMap:
-                    cap = volumeCapMap[volid]
-                    # TODO assuming GB unit
-                    cap = long(pow(1024,3)*float(cap)/long(blksize))
-                    sv.setCapacity(cap)
-                    if volid in volumeUsedCapMap:
-                      usedCap = volumeUsedCapMap[volid]
-                      # TODO assuming GB unit
-                      usedCap = long(pow(1024,3)*float(usedCap)/long(blksize))
-                      # sometimes ViPR shows used cap greater than capacity
-                      if usedCap <= cap:
-                        sv.setFreeSpace(cap-usedCap)
-                      else:
-                        sv.setFreeSpace(long(0))
                   
-                  # check VPlex vdisks
+                  setVolumeCapacity(sv, volid, volumeCapMap, volumeUsedCapMap, blksize)
+                  
+                  # check VPlex vdisks for connection to this LUN
                   if rootwwn in vdiskByLun:
                     #log.debug('Found matching wwn: ' + rootwwn)
-                    vdiskinfo = vdiskByLun[rootwwn]
-                    serialnb = vdiskinfo['serialnb']
-                    vvol = vdiskinfo['vvol']
-                    
-                    if serialnb + vvol in uuidBySerialVol:
-                      uuid = uuidBySerialVol[serialnb + vvol]
-                      # log.debug('Processing connection from ' + uuid + ' and ' + rootwwn)
-                      vdiskByLunUsed.append(rootwwn) # keep track of the ones used
+                    set_array_to_vplex(sss, sv, 'XtremIO')
                       
-                      # create skinny array volume for storage performance
-                      ssv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-                      ssv.setManagedSystemName(rootwwn)
-                      
-                      # create skinny volume for storage performance
-                      vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-                      vsv.setManagedSystemName(uuid)
-
-                      # create relationships
-                      bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-                      bo.setSource(vsv)
-                      bo.setTarget(ssv)
-                      bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-                      vsv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-                      ctsResult.addExtendedResult(vsv)
-                      
-                      realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-                      realizes.setSource(sv)
-                      realizes.setTarget(vsv)
-                      realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-                      sv.setRealizedBy(realizes) # this causes StorageError without MSN set on vsv
-                      
-                      if not serialnb in usesRelnAdded:
-                        # uses relationship has not yet been added for this VPlex
-                        # create skinny VPlex
-                        vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-                        vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))
-                        # create skinny array
-                        array = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-                        array.setAnsiT10Id(sss.getAnsiT10Id())
-                        # create uses relation
-                        uses = sensorhelper.newModelObject('cdm:relation.Uses')
-                        uses.setSource(vplex)
-                        uses.setTarget(array)
-                        uses.setType('com.collation.platform.model.topology.relation.Uses')
-                        ctsResult.addExtendedResult(uses)
-                        log.debug('Added Uses relationship for ' + serialnb + ' and ' + sss.getSerialNumber())
-                        usesRelnAdded.append(serialnb)
-                    else:
-                      log.warning('Could not find virtual volume: ' + serialnb + ' ' + vvol)
-                      
-                  # see if Windows disk exists to build scsipaths
-                  if rootwwn in hostDisksByLun: # rootwwn is same as partsn for VPlex volumes
-                    hostDiskArray = hostDisksByLun[rootwwn]
-                    paths = []
-                    log.debug('Found Windows disk that matches lun: ' + rootwwn)
-                    for hostDisk in hostDiskArray:
-                      log.debug(' hostDisk: ' + str(hostDisk))
-                      sPath = sensorhelper.newModelObject('cdm:dev.SCSIPath')
-                  
-                  # build scsi paths
-                  # TODO ?
-                  # paths = []
-                  # hostPaths = []
-                  # for scsipath in scsipaths:
-                      # if part == scsipath['LUN']:
-                        # # {'LUN': u'ERP_RHP_APP_CRR_jrnl', 'HBA': u'ERP_RHP_APP_CRR_jrnl', 
-                        # #  'WWN': u'514F0C5F3BC0037F', 'hostname': u'FNM00105100416', 'array': u'OH801-XIO-03'}
-                        # log.debug('lunname='+lun_HEX+'.equals('+scsilunname+')')
-                        # log.debug(str(scsipath))
                   members.append(sv)
                 # ViPR sensor only sets members, not storageExtents
                 sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
                 discovered = True
-                ctsResult.addExtendedResult(sss)
+                storeResult(sss, 'XtremIO')
               else:
                 log.debug('No volumes returned for ' + sss.getFqdn())
             elif arraytyp.startswith('Unity/VNXe'):
@@ -1040,42 +1000,7 @@ try:
               if volumeOutput:
                 volumes = getParsedJsonArray(volumeOutput)
                 
-                volumeCapMap = {}
-                volumeUsedCapMap = {}
-                try:
-                  # cache capacities for all volumes
-                  filter='filter=(name%3D%27UsedCapacity%27%7Cname%3D%27Capacity%27)%26parttype%3D%27LUN%27%26serialnb%3D%27' + sss.getSerialNumber() + '%27'
-                  properties='properties=name,part,unit'
-                  volumeCapOutput = getSeriesValues(filter, properties)
-                  
-                  if volumeCapOutput:
-                    volumeCaps = getParsedJsonArray(volumeCapOutput)
-                    for volumeCap in volumeCaps:
-                      log.debug('volumeCap:' + str(volumeCap))
-                      points = volumeCap.getJsonArray('points')
-                      if points and not points.isNull(0):
-                        point = points.getJsonArray(0).getString(1)
-                        properties = volumeCap.getJsonObject('properties')
-                        log.debug('properties:' + str(properties))
-                        unit = properties.getJsonString('unit').getString()
-                        name = properties.getJsonString('name').getString()
-                        part = properties.getJsonString('part').getString()
-                        # TODO code assumes everything is same unit
-                        if name == 'Capacity':
-                          volumeCapMap[part] = point
-                        elif name == 'UsedCapacity':
-                          volumeUsedCapMap[part] = point
-                    #log.debug('volumeCapMap:' + str(volumeCapMap))
-                    #log.debug('volumeUsedCapMap:' + str(volumeUsedCapMap))
-                    if len(volumeCapMap) == 0 and len(volumeUsedCapMap) == 0:
-                      msg = 'Volume capacity values not found for ' + arraytyp + ' array ' + sss.getFqdn()
-                      log.warning(msg)
-                      ctsResult.warning(msg)
-                except Exception, e:
-                  msg = 'Error occurred during volume capacity query, capacity values not updated for ' + arraytyp + ' array ' + sss.getFqdn()
-                  log.warning(msg)
-                  log.info('Error : ' + str(e))
-                  ctsResult.warning(msg)
+                volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'part')
                 
                 members = []
                 # iterate over all volumes
@@ -1092,31 +1017,17 @@ try:
                   sv.setLUN(int(srclun))
                   sv.setBlockSize(long(512))
 
-                  cap = volumeCapMap[part]
-                  if cap:
-                    # TODO assuming GB unit
-                    cap = long(pow(1024,3)*float(cap)/512)
-                    sv.setCapacity(cap)
-                    usedCap = volumeUsedCapMap[part]
-                    if usedCap:
-                      # TODO assuming GB unit
-                      usedCap = long(pow(1024,3)*float(usedCap)/512)
-                      sv.setFreeSpace(cap-usedCap)
+                  setVolumeCapacity(sv, part, volumeCapMap, volumeUsedCapMap)
                   
-                  paths = []
-                  hostPaths = []
-                  for scsipath in scsipaths:
-                      lun_HEX = part
-                      scsilunname = scsipath['LUN']
-                      if lun_HEX is None or lun_HEX == scsilunname:
-                        log.debug('lunname='+lun_HEX+'.equals('+scsilunname+')')
-                        log.debug(str(scsipath))
-
+                  if wwn in vdiskByLun:
+                    #log.debug('Found matching wwn: ' + partsn)
+                    set_array_to_vplex(sss, sv, 'Unity')
+                  
                   members.append(sv)
                 # ViPR sensor only sets members, not storageExtents
                 sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
                 discovered = True
-                ctsResult.addExtendedResult(sss)
+                storeResult(sss, 'Unity')
               else:
                 log.debug('No volumes returned for ' + sss.getFqdn())
             else:
@@ -1129,7 +1040,7 @@ try:
               log.debug(wwn + ': ' + str(vdiskByLun[wwn]))
           
           if switches:
-            # VPLex ports collected earlier in vplexPorts dict
+            # VPLex ports collected earlier in vplexPortWWN dict
             # query switch ports
             filter='filter=%21vstatus%3D%27inactive%27%26devtype%3D%27FabricSwitch%27%26parttype%3D%27Port%27'
             fields='fields=device,part,portwwn,partwwn'
@@ -1155,7 +1066,7 @@ try:
                   con.setTarget(target)
                   con.setType("com.collation.platform.model.topology.relation.ConnectedTo")
                   log.debug('ConnectedTo: ' + str(partwwn) + ':' + str(portwwn))
-                  ctsResult.addExtendedResult(con)
+                  storeResult(con, 'Switch')
             
             for switch in switches:
               log.debug('switch:' + str(switch))
