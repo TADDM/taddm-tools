@@ -3,12 +3,7 @@
 "serialnb": "FNM92131512637",
 "model": "VPLEX VS2",
 "vendor": "EMC Corporation",
-"device": "FNM92131512637"
-},
-{
-"serialnb": "FNM50079030864",
-"model": "VPLEX VS2",
-"vendor": "EMC Corporation",
-"device": "FNM50079030864"
+"device": "FNM92131512637",
+"devdesc": "5.5.2.04.00.01"
 }
 ]}
