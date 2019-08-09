@@ -25,7 +25,7 @@ Main comment block, Beginning of Script
 
 SCRIPT OVERVIEW 
 
-checkViprVMs.jy - This script is used to check if hosts in ViPR_VMs scope are being
+checkViprWindows.jy - This script is used to check if hosts in ViPR_Windows_hosts scope are being
   discovered succesfully
 
 DESCRIPTION:
@@ -99,7 +99,7 @@ log = LogFactory.getLogger("check_vipr_vms")
 
 def usage():
   print ''' \
-usage: checkViprVMs.py [options]
+usage: checkViprWindows.py [options]
 
   Options:
   -u userid       User required to login to TADDM Server
@@ -116,14 +116,19 @@ usage: checkViprVMs.py [options]
 msg = '''\
 The following scope elements could not be verified as being successfully
 discovered via HostStorageSensor in the last 14 days. These hosts are in ViPR 
-and contain an RDM so they are important for storage mapping, reporting, and 
+and are physical Windows so they are important for storage mapping, reporting, and 
 billing. Ensure the following are true for each of the items:
 
    1) The IP is included in a scopeset that is in the normal periodic discoveries
    2) Ensure that the correct anchor/gateway is used during discovery
-   3) The HostStorageSensor runs succesfully on the target host
-   4) The serialNumber is properly discovered via the Linux/Windows sensor. Ensure
-      that dmidecode is in the sudoers file on Linux host targets.
+   3) The HostStorageSensor runs succesfully on the target host without warnings
+'''
+dup_msg = '''\
+The following scope elements were found multiple times by IP address. These 
+duplicates need to be resolved. Ensure the following are true:
+
+   1) The serial number is being successfully discovered via sudo using dmidecode
+   2) The older duplicates are deleted from TADDM
 '''
 
 ########################
@@ -180,7 +185,7 @@ if __name__ == "__main__":
     else:   
       assert False, "unhandled option"
 
-  scopeset = 'ViPR_VMs'
+  scopeset = 'ViPR_Windows_hosts'
   
   host = "localhost"       # we default to localhost, it COULD be changed but this script will run ON the TADDM Server
 
@@ -215,11 +220,12 @@ if __name__ == "__main__":
     scope = data.getModelObject(3)
     if scope.hasElements():
       notverified = []
+      dups = []
       for element in scope.getElements():
         verified = False
         scope = GetScope(element)
         #print scope + ',' + ':'.join([str(e) for e in excludes]) + ',' + element.getName()
-        q = 'select name, storageExtent from ComputerSystem where signature is-not-null and serialNumber is-not-null and exists ( ipInterfaces.displayName == \'' + scope + '\' )'
+        q = 'select name, storageExtent from ComputerSystem where exists ( ipInterfaces.displayName == \'' + scope + '\' )'
         hosts = api.executeQuery(q, 2, None, None)
         if hosts.next():
           host = hosts.getModelObject(2)
@@ -228,13 +234,14 @@ if __name__ == "__main__":
             #print 'hasStorageExtent'
             for se in host.getStorageExtent():
               #print str(se)
-              if get_class_name(se).endswith('SCSIVolume'):
+              if get_class_name(se).endswith('FCVolume'):
                 #print str(get_class_name(se))
                 #print str(end_time)
                 if end_time < se.getLastStoredTime():
                   verified = True
           if hosts.next():
-            print '***More than one result found for ' + scope
+            dups.append(scope + ',,' + element.getName())
+            #print '***More than one result found for ' + scope
         if verified is False:
           #print 'Not verified ' + scope + '/' + element.getName()
           notverified.append(scope + ',,' + element.getName())
@@ -244,7 +251,12 @@ if __name__ == "__main__":
         for nv in notverified:
           print str(nv)
       else:
-        print 'All VMs with RDM have been successfully discovered in the last 14 days.'
+        print 'All physical Windows hosts have been successfully discovered in the last 14 days.'
+      if len(dups) > 0:
+        print ''
+        print dup_msg
+        for dup in dups:
+          print str(dup)
     else:
       print scopeset + ' does not contain any scope elements'
   else:
