@@ -142,12 +142,12 @@ def getArrayLuns():
   return getPropertiesValues(filter, fields)
   
 def getVirtualVolumes(device):
-  #url_vvolumes = ('fields=vvol,lunwwn,partsn,isused,locality,cluster,array,ismapped,vendor,csgroup,cdev,partdesc,view,extent,ismasked,dgraid,psvclvl'+
   # if you include psvclvl in the query it removes a vvol if the service level is null
-  # view != 'N/A' filter is added to match results in ViPR UI
+  # In ViPR UI volumes withere view = 'N/A' are not shown but they are shown in reporting so we are including here
   fields = 'fields=device,vvol,psvclvl,partsn'
-  filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27%26%21view%3D%27N/A%27'+
-    '%26device%3D%27'+device+'%27')
+  #filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27%26%21view%3D%27N/A%27'+
+  filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27'+
+    '%26device%3D%27'+device+'%27%26%21vstatus%3D%27inactive%27')
   return getPropertiesValues(filter, fields)
 
 def getParsedJsonArray(output):
@@ -216,6 +216,7 @@ skipStorage = {}
 #skipStorage['XtremIO'] = True
 #skipStorage['Unity'] = True
 #skipStorage['Switch'] = True
+#skipStorage['Solaris'] = True
 
 def storeResult(mo, type):
   if type in skipStorage: # skip storage if key listed
@@ -269,6 +270,8 @@ def getVolumeCapacities(arraySerial, property, parttype = 'LUN'):
 
 # set volume capacity and used capacity on the storage volume
 def setVolumeCapacity(sv, name, volumeCapMap, volumeUsedCapMap, blksize = 512):
+  if blksize is None:
+    blksize = 512
   if name in volumeCapMap:
     cap = volumeCapMap[name]
     if cap:
@@ -293,51 +296,61 @@ def set_array_to_vplex(array, array_svolume, storage_tag):
   serialnb = vdiskinfo['serialnb']
   vvol = vdiskinfo['vvol']
   
+  # create skinny array volume for storage performance
+  ssv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+  ssv.setManagedSystemName(array_vol_wwn)
+    
+  vdiskByLunUsed.append(array_vol_wwn) # keep track of the ones used
+  
   if serialnb + vvol in uuidBySerialVol:
     uuid = uuidBySerialVol[serialnb + vvol]
     #log.debug('Processing connection from ' + uuid + ' and ' + array_vol_wwn)
-    vdiskByLunUsed.append(array_vol_wwn) # keep track of the ones used
-    
-    # create skinny array volume for storage performance
-    ssv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-    ssv.setManagedSystemName(array_vol_wwn)
     
     # create skinny volume for storage performance
     vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
     vsv.setManagedSystemName(uuid)
-
-    # create relationships
-    bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-    bo.setSource(vsv)
-    bo.setTarget(ssv)
-    bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-    vsv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-    storeResult(vsv, storage_tag)
-    
-    realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-    realizes.setSource(array_svolume)
-    realizes.setTarget(vsv)
-    realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-    array_svolume.setRealizedBy(realizes) # this causes StorageError without MSN set on vsv
-    
-    if not serialnb in usesRelnAdded:
-      # uses relationship has not yet been added for this VPlex
-      # create skinny VPlex
-      vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-      vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))
-      # create skinny array
-      skinny_array = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-      skinny_array.setAnsiT10Id(array.getAnsiT10Id())
-      # create uses relation
-      uses = sensorhelper.newModelObject('cdm:relation.Uses')
-      uses.setSource(vplex)
-      uses.setTarget(skinny_array)
-      uses.setType('com.collation.platform.model.topology.relation.Uses')
-      storeResult(uses, storage_tag)
-      log.debug('Added Uses relationship for ' + serialnb + ' and ' + array.getSerialNumber())
-      usesRelnAdded.append(serialnb)
   else:
-    log.warning('Could not find virtual volume: ' + serialnb + ' ' + vvol)
+    #log.debug('Processing connection from ' + vvol + ' and ' + array_vol_wwn)
+    # create skinny volume for storage performance
+    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+    vsv.setName(vvol)
+    
+    # create skinny VPlex
+    vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
+    vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))    
+    vsv.setParent(vplex)
+  
+  # create relationships
+  bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
+  bo.setSource(vsv)
+  bo.setTarget(ssv)
+  bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
+  vsv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
+  #log.debug('Storing basedOn:' + str(vsv) + ':' + str(ssv))
+  storeResult(vsv, storage_tag)
+  
+  realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
+  realizes.setSource(array_svolume)
+  realizes.setTarget(vsv)
+  realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
+  array_svolume.setRealizedBy(realizes) # this causes StorageError without MSN set on vsv
+  
+  if not serialnb in usesRelnAdded:
+    # uses relationship has not yet been added for this VPlex
+    # create skinny VPlex
+    vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
+    vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))
+    # create skinny array
+    skinny_array = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
+    skinny_array.setAnsiT10Id(array.getAnsiT10Id())
+    # create uses relation
+    uses = sensorhelper.newModelObject('cdm:relation.Uses')
+    uses.setSource(vplex)
+    uses.setTarget(skinny_array)
+    uses.setType('com.collation.platform.model.topology.relation.Uses')
+    storeResult(uses, storage_tag)
+    log.debug('Added Uses relationship for ' + serialnb + ' and ' + array.getSerialNumber())
+    usesRelnAdded.append(serialnb)
      
 # ctsSeed is CustomTemplateSensorSeed with following methods
 # Map<String, Object> getResultMap()
@@ -398,6 +411,7 @@ try:
             
             # get physical host information for scsi path
             filter='filter=devtype%3D%27Host%27%26parttype%3D%27Path%27%26%21inwwn%3D%27N/A%27'
+            #fields='fields=tgtwwn,pathname,inwwn,lunid,hostname,osfamily' # get osfamily so we can build out Solaris
             fields='fields=tgtwwn,pathname,inwwn,lunid'
             hostPathOutput = getPropertiesValues(filter, fields)
             hostPathsByLun = {}
@@ -408,6 +422,8 @@ try:
                 pathname = hostPath.getJsonString('pathname').getString()
                 inwwn = hostPath.getJsonString('inwwn').getString()
                 lunid = hostPath.getJsonString('lunid').getString()
+                #hostname = hostPath.getJsonString('hostname').getString()
+                #osfamily = hostPath.getJsonString('osfamily').getString()
                 if lunid in hostPathsByLun:
                   hostPathsArray = hostPathsByLun[lunid]
                   hostPathsArray.append({ 'tgtwwn': tgtwwn, 'pathname': pathname, 'inwwn': inwwn })
@@ -604,17 +620,16 @@ try:
               # query volumes for vplex
               vvolumeOutput = getVirtualVolumes(device)
               
+              members = [] # collect all the vvols
               if vvolumeOutput:
                 vvolumes = getParsedJsonArray(vvolumeOutput)
-                members = []
                 
                 # query vvol capacity
                 volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'vvol', 'VirtualVolume')
                 
                 # iterate over all volumes
                 for vvolume in vvolumes:
-                  log.debug('vvolume:' + str(vvolume))
-                  # vvol,lunwwn,partsn,isused,locality,cluster,array,ismapped,vendor,csgroup,cdev,partdesc,view,extent,ismasked,dgraid
+                  #log.debug('vvolume:' + str(vvolume))
                   vvol = vvolume.getJsonString('vvol').getString()
                   partsn = vvolume.getJsonString('partsn').getString()
 
@@ -759,8 +774,34 @@ try:
                       
                       usesRelnAdded.append(parent.getSerialNumber())
                       
-                # ViPR sensor only sets members, not storageExtents
-                sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
+              # now get vvolumes where partsn is empty
+              fields='fields=device,vvol,psvclvl'
+              filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27'+
+                '%26device%3D%27'+device+'%27%26%21vstatus%3D%27inactive%27%26partsn%3D%27%27')
+              vvolumeOutput = getPropertiesValues(filter, fields)
+              if vvolumeOutput:
+                vvolumes = getParsedJsonArray(vvolumeOutput)
+                
+                # query vvol capacity
+                volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'vvol', 'VirtualVolume')
+                
+                # iterate over all volumes
+                for vvolume in vvolumes:
+                  #log.debug('vvolume:' + str(vvolume))
+                  vvol = vvolume.getJsonString('vvol').getString()
+
+                  vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+                  vsv.setParent(sss)
+                  vsv.setName(vvol)
+                  vsv.setVirtual(True)
+                  
+                  # set vvol capacity
+                  setVolumeCapacity(vsv, vvol, volumeCapMap, volumeUsedCapMap)
+                  
+                  members.append(vsv)
+              
+              # ViPR sensor only sets members, not storageExtents
+              sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
               
               storeResult(sss, 'VPlex')
               discovered = True
@@ -863,7 +904,7 @@ try:
           if vdiskOutput:
             vdisks = getParsedJsonArray(vdiskOutput)
             for vd in vdisks:
-              #log.debug('vdisk:' + str(vdisk))
+              #log.debug('vdisk:' + str(vd))
               vdisk = vd.getJsonString('vdisk').getString()
               lunwwn = vd.getJsonString('lunwwn').getString()
               vvol = vd.getJsonString('vvol').getString()
@@ -895,7 +936,6 @@ try:
             usesRelnAdded = []
             # handle by array type
             if arraytyp == 'VNX':
-              # VNX = fields=device,part,devconf,svclevel,purpose,poolname,pooltype,sgname,datatype,devdesc,dgname,dgraid,dgroup,dgstype,dgtype,diskrpm,disksize,disktype,hexid,host,luntagid,partdesc,partid,partsn,sstype
               # query volumes for array
               volumeOutput = getVnxArrayVolumes(sss.getFqdn())
 
@@ -943,50 +983,100 @@ try:
               # XtremIO
               #
               ######
-              filter = 'filter=parttype=%27LUN%27%26serialnb=%27' + sss.getSerialNumber() + '%27'
-              fields = 'fields=part,lun,blksize,volid,rootwwn,clstuid,disktype'
+              filter = 'filter=parttype=%27LUN%27%26%21vstatus%3D%27inactive%27%26serialnb=%27' + sss.getSerialNumber() + '%27'
+              fields = 'fields=part,lun,blksize,disktype,partsn'
               volumeOutput = getPropertiesValues(filter, fields)
 
+              members = []
+              volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'part')
               if volumeOutput:
                 volumes = getParsedJsonArray(volumeOutput)
                 
-                volumeCapMap, volumeUsedCapMap = getVolumeCapacities(sss.getSerialNumber(), 'volid')
-                
-                members = []
                 # iterate over all volumes
                 for volume in volumes:
                   #log.debug('volume:' + str(volume))
 
                   part = volume.getJsonString('part').getString()
-                  lun = volume.getJsonString('lun').getString()
-                  blksize = volume.getJsonString('blksize').getString()
-                  volid = volume.getJsonString('volid').getString()
-                  rootwwn = volume.getJsonString('rootwwn').getString()
-                  clstuid = volume.getJsonString('clstuid').getString()
+                  lunJ = volume.getJsonString('lun')
+                  lun = None
+                  if lunJ:
+                    lun = lunJ.getString()
+                  blksizeJ = volume.getJsonString('blksize')
+                  blksize = None
+                  if blksizeJ:
+                    blksize = blksizeJ.getString()
+                  #volid = volume.getJsonString('volid').getString()
                   disktype = volume.getJsonString('disktype').getString()
+                  partsn = volume.getJsonString('partsn').getString()
 
                   sv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
                   sv.setParent(sss)
                   sv.setName(part)
-                  sv.setLUN(int(lun))
-                  sv.setBlockSize(long(blksize))
+                  if lun:
+                    sv.setLUN(int(lun))
+                  if blksize:
+                    sv.setBlockSize(long(blksize))
                   # use MSN for storageVolume to allow sv.setBasedOn(bo) (a hack)
-                  sv.setManagedSystemName(rootwwn)
+                  sv.setManagedSystemName(partsn)
                   
-                  setVolumeCapacity(sv, volid, volumeCapMap, volumeUsedCapMap, blksize)
+                  setVolumeCapacity(sv, part, volumeCapMap, volumeUsedCapMap, blksize)
                   
                   # check VPlex vdisks for connection to this LUN
-                  if rootwwn in vdiskByLun:
-                    #log.debug('Found matching wwn: ' + rootwwn)
+                  if partsn in vdiskByLun:
+                    log.debug('Found matching wwn: ' + partsn)
                     set_array_to_vplex(sss, sv, 'XtremIO')
                       
                   members.append(sv)
-                # ViPR sensor only sets members, not storageExtents
-                sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
-                discovered = True
-                storeResult(sss, 'XtremIO')
-              else:
-                log.debug('No volumes returned for ' + sss.getFqdn())
+
+              # add flash drive volumes (no lun or blksize and partsn corresponds to vdisk)
+              filter = 'filter=(lun=%27%27%7Cblksize=%27%27)%26parttype=%27LUN%27%26%21vstatus%3D%27inactive%27%26serialnb=%27' + sss.getSerialNumber() + '%27'
+              fields = 'fields=part,disktype,partsn'
+              volumeOutput = getPropertiesValues(filter, fields)
+              
+              if volumeOutput:
+                # TODO - make this function b/c it's identical to above
+                volumes = getParsedJsonArray(volumeOutput)
+                
+                # iterate over all volumes
+                for volume in volumes:
+                  #log.debug('volume:' + str(volume))
+
+                  part = volume.getJsonString('part').getString()
+                  lunJ = volume.getJsonString('lun')
+                  lun = None
+                  if lunJ:
+                    lun = lunJ.getString()
+                  blksizeJ = volume.getJsonString('blksize')
+                  blksize = None
+                  if blksizeJ:
+                    blksize = blksizeJ.getString()
+                  #volid = volume.getJsonString('volid').getString()
+                  disktype = volume.getJsonString('disktype').getString()
+                  partsn = volume.getJsonString('partsn').getString()
+
+                  sv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+                  sv.setParent(sss)
+                  sv.setName(part)
+                  if lun:
+                    sv.setLUN(int(lun))
+                  if blksize:
+                    sv.setBlockSize(long(blksize))
+                  # use MSN for storageVolume to allow sv.setBasedOn(bo) (a hack)
+                  sv.setManagedSystemName(partsn)
+                  
+                  setVolumeCapacity(sv, part, volumeCapMap, volumeUsedCapMap, blksize)
+                  
+                  # check VPlex vdisks for connection to this LUN
+                  if partsn in vdiskByLun:
+                    log.debug('Found matching wwn: ' + partsn)
+                    set_array_to_vplex(sss, sv, 'XtremIO')
+                      
+                  members.append(sv)
+
+              # ViPR sensor only sets members, not storageExtents
+              sss.setMembers(sensorhelper.getArray(members,'cdm:dev.StorageVolume'))
+              discovered = True
+              storeResult(sss, 'XtremIO')
             elif arraytyp.startswith('Unity/VNXe'):
               ######
               #
@@ -1071,7 +1161,26 @@ try:
             for switch in switches:
               log.debug('switch:' + str(switch))
               # query switch ports
-              
+
+          # Build Solaris physical hosts because HBA discovery not working
+          filter='filter=devtype%3D%27Host%27%26osfamily%3D%27Solaris%27'
+          fields='fields=device,hostname,fqdn'
+          solarisOutput = getPropertiesValues(filter, fields)
+          if solarisOutput:
+            for solaris in getParsedJsonArray(solarisOutput):
+              hostname = solaris.getJsonString('hostname').getString()
+              device   = solaris.getJsonString('device').getString()
+              if hostname.lower() == 'tx342bkpnwsn01':
+                log.debug('Building Solaris machine: ' + hostname.lower())
+                host = sensorhelper.newModelObject('cdm:sys.sun.SunSPARCUnitaryComputerSystem')
+                host.setOpenId(OpenId(host).addId('solaris', hostname.lower()))
+                # add FC volumes
+                filter='filter=device%3D%27' + device + '%27%26parttype%3D%27Disk%27'
+                fields='fields=hostname'
+                solarisDiskOutput = getPropertiesValues(filter, fields)
+                #if solarisDiskOutput:
+                #  for solarisDisk in getParsedJsonArray(solarisDiskOutput):
+                #storeResult(host, 'Solaris')
         except Exception, e:
           log.warning('Problem occurs while processing the data: ' + str(e))
           ctsResult.warning('Problem occurs while processing the data:' + str(e))
