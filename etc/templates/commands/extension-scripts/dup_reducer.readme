@@ -1,0 +1,92 @@
+Duplicate Reducer Discovery Extension v2.1
+--------------------------------------------------------------------------------
+ Release Information
+--------------------------------------------------------------------------------
+      
+       Product: Duplicate Reducer Discovery Extension v2.1
+Release Number: 2.1 (beta)
+  Release Date: September, 2018
+
+--------------------------------------------------------------------------------
+ Description
+--------------------------------------------------------------------------------
+
+ Duplicate ComputerSystem CIs in TADDM can be an issue. This issue specifically
+ affects Sun and HP-UX discovery because it is difficult and in some cases
+ impossible to discover the serial number for these platforms. When the serial
+ number is not discovered, often the IP and MAC address end up being unique
+ identifiers used through the signature attribute. When an IP address or network
+ card changes, the signature thus changes and causes duplicate ComputerSystem
+ CIs in TADDM.  VMware VMs moving around can also cause duplicates if the VMware
+ admin does not  use vMotion to move VMs. This causes the serial to change and
+ TADDM to discover  the target system as a new VM.
+ 
+ This solution for reducing duplicates relies on a tag file remaining on the
+ target systems between discoveries. The value in this tag file, along with the
+ host name can then be used as naming rule for the discovered CI. Since the
+ introduction of OpenID generic naming rules in TADDM 7.3, custom naming rules
+ can be used to identify CIs. This solution uses a combination of a random
+ number (located in the tag file that resides on the target system) and a host
+ name to uniquely identify target systems.
+
+ *** IMPORTANT NOTES ***
+ 
+ The location of the tag file will differ by platform. where <name> is the 
+ discovered host name of the target system. 
+ 
+ Windows: C:\.discoverytag-<name> 
+ Non-Windows: /tmp/.discoverytag-<name> 
+ 
+ The discovery service account will need read/write access to these locations 
+ in order for the extension to properly run. Warnings are generated during 
+ discovery if access issues occur or there are is not enough discovered 
+ information to continue. If the tag file is cleared out at any time this will 
+ affect the functioning  of this solution and there is a risk of introducing 
+ duplicate CIs.
+
+--------------------------------------------------------------------------------
+ Installation Notes
+--------------------------------------------------------------------------------
+
+ System Requirements
+  - TADDM 7.3.0+ (tested on 7.3.0.3, 7.3.0.4)
+ 
+ Prerequisite
+ - It is recommended to do a database backup before using this discovery
+ extension against a large scope set in case problems occur
+ - It is recommended to first implement in a development environment and test
+ - If running script-based discovery for Linux/Windows VMs this extension will
+   not execute. Extensions do not execute during script-based discovery.
+ 
+ Installation
+ 1) Open the TADDM discovery management console, on the side bar click the
+    Computer Systems icon. For the WindowsComputerSystemTemplate,
+    LinuxComputerSystemTemplate, and any other templates you wish to apply,
+    ensure that they are set to enabled (set to enabled if not).
+ 2) Copy dup_reducer.py to the dist/etc/templates/commands/extension-scripts
+    directory.
+ 3) Under dist/etc/templates/commands, edit WindowsComputerSystemTemplate,
+    LinuxComputerSystemTemplate, and any other templates you wish to apply by
+    adding the following line to the end:
+
+    SCRIPT:etc/templates/commands/extension-scripts/dup_reducer.py
+ 
+ Note: You do NOT need to restart TADDM for this to take affect.
+ 
+ Manifest
+  This release consists of the following items:
+  
+   - README (this file)
+   - Jython sensor code (dup_reducer.py)
+
+--------------------------------------------------------------------------------
+ Known Problems and Workarounds
+--------------------------------------------------------------------------------
+
+ None
+ 
+--------------------------------------------------------------------------------
+ Troubleshooting
+--------------------------------------------------------------------------------
+ 
+ None
