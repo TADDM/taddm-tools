@@ -81,8 +81,47 @@ class CommandNotFoundError(Exception):
   def __str__(self):
     return repr(self.value)
 
+# build out result model objects and return as list
+def getResults(uuid, disk):
+  results = []
+  
+  vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+  # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
+  # have been using it all over the place as a hack
+  vsv.setManagedSystemName(uuid)
+  log.debug('VPLEX volume:' + str(vsv))
+  #results.append(vsv)
+  
+  fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
+  fcv.setName(disk.split('/')[-1])
+  fcv.setDeviceID(disk)
+  fcv.setDescription('RDM')
+  fcv.setParent(cs)
+  # create relationships
+  bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
+  bo.setSource(fcv)
+  bo.setTarget(vsv)
+  bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
+  fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
+  log.debug('SCSI volume:' + str(fcv))
+  results.append(fcv)
+  
+  # redefine so basedOn not included twice
+  fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
+  fcv.setName(disk.split('/')[-1])
+  fcv.setDeviceID(disk)
+  fcv.setDescription('RDM')
+  fcv.setParent(cs)
+
+  realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
+  realizes.setSource(vsv)
+  realizes.setTarget(fcv)
+  realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
+  results.append(realizes)
+  
+  return results
+ 
 def sg_inq(disk):
-  # TODO handle sudo command failed /sudo not available
   sg_inq_output = sensorhelper.executeCommand('sudo sg_inq -i ' + disk)
   if sg_inq_output:
     # parse out UUID
@@ -95,32 +134,8 @@ def sg_inq(disk):
       uuid = uuid.upper()
       log.debug('uuid: ' + uuid)
       if uuid.startswith('6000144'):
-        vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-        # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
-        # have been using it all over the place as a hack
-        vsv.setManagedSystemName(uuid)
-        log.debug('VPLEX volume:' + str(vsv))
-        result.addExtendedResult(vsv)
-        
-        fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
-        fcv.setName(disk.split('/')[-1])
-        fcv.setDeviceID(disk)
-        fcv.setDescription('RDM')
-        fcv.setParent(cs)
-        # create relationships
-        bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-        bo.setSource(fcv)
-        bo.setTarget(vsv)
-        bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-        fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-        log.debug('SCSI volume:' + str(fcv))
-        result.addExtendedResult(fcv)
-        
-        realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-        realizes.setSource(vsv)
-        realizes.setTarget(fcv)
-        realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-        result.addExtendedResult(realizes)
+        for r in getResults(uuid, disk):
+          result.addExtendedResult(r)
       else:
         # TODO add result warning that Invista disk not found
         log.warning('WWN does not start with 6000144:' + uuid)
@@ -159,119 +174,84 @@ try:
 
     # check if there are any EMC Invista disks
     if re.search('.*EMC.*', output):
-      # get lsscsi version to decide how to proceed
-      version = sensorhelper.executeCommand('lsscsi -V 2>&1')
-      if version:
-        #log.debug('version output:' + version)
-        version = Decimal(version.split()[1])
-        #log.debug('decimal version: ' + str(version))
-        if version > Decimal('0.26'):
-          # use lsscsi --scsi_id
-          for line in output.splitlines():
-            if re.search('.*EMC.*', line):
-              disk = line.split()[-1]
-              scsi_output = sensorhelper.executeCommand('lsscsi --scsi_id | grep "' + disk +'"')
-              if scsi_output:
-                # parse out UUID
-                uuid = scsi_output.split()[-1]
-                # the scsi_id has a leading character '3'
-                if len(uuid) == 33:
-                  uuid = uuid[1:]
-                uuid = uuid.upper()
-                log.debug('uuid: ' + uuid)
-                if uuid.startswith('6000144'):
-                  vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-                  # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
-                  # have been using it all over the place as a hack
-                  vsv.setManagedSystemName(uuid)
-                  log.debug('VPLEX volume:' + str(vsv))
-                  result.addExtendedResult(vsv)
-                  
-                  fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
-                  fcv.setName(disk.split('/')[-1])
-                  fcv.setDeviceID(disk)
-                  fcv.setDescription('RDM')
-                  fcv.setParent(cs)
-                  # create relationships
-                  bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-                  bo.setSource(fcv)
-                  bo.setTarget(vsv)
-                  bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-                  fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-                  log.debug('SCSI volume:' + str(fcv))
-                  result.addExtendedResult(fcv)
-                  
-                  realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-                  realizes.setSource(vsv)
-                  realizes.setTarget(fcv)
-                  realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-                  result.addExtendedResult(realizes)
-                else:
-                  # TODO add result warning that Invista disk not found
-                  log.warning('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid)
-                  # try sudo sq_inq -i <device>
-                  log.debug('Attempting sg_inq command to get disk information')
-                  sg_inq(disk)
-              else:
-                log.warning('No output from lsscsi --scsi_id for ' + disk)
-        elif version == Decimal('0.26'):
-          # use lsscsi --wwn
-          for line in output.splitlines():
-            if re.search('.*EMC.*', line):
-              disk = line.split()[-1]
-              wwnOutput = sensorhelper.executeCommand('lsscsi --wwn | grep "' + disk + '" | awk \'{print $3}\'')
-              if wwnOutput:
-                # parse out UUID
-                uuid = wwnOutput.strip()
-                if uuid.startswith('0x'):
-                  uuid = uuid[2:]
-                uuid = uuid.upper()
-                log.debug('uuid: ' + uuid)
-                if uuid.startswith('6000144'):
-                  vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-                  # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
-                  # have been using it all over the place as a hack
-                  vsv.setManagedSystemName(uuid)
-                  log.debug('VPLEX volume:' + str(vsv))
-                  result.addExtendedResult(vsv)
-                  
-                  fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
-                  fcv.setName(disk.split('/')[-1])
-                  fcv.setDeviceID(disk)
-                  fcv.setDescription('RDM')
-                  fcv.setParent(cs)
-                  # create relationships
-                  bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-                  bo.setSource(fcv)
-                  bo.setTarget(vsv)
-                  bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-                  fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-                  log.debug('SCSI volume:' + str(fcv))
-                  result.addExtendedResult(fcv)
-                  
-                  realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-                  realizes.setSource(vsv)
-                  realizes.setTarget(fcv)
-                  realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-                  result.addExtendedResult(realizes)
-                else:
-                  # TODO add result warning that Invista disk not found
-                  log.warning('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid)
-                  # try sudo sq_inq -i <device>
-                  log.debug('Attempting sg_inq command to get disk information')
-                  sg_inq(disk)
+      try:
+        # check if sudo is configured for sg_inq first, this way we won't trigger
+        # a sudo alert if we run it and it fails
+        sudo_list = sensorhelper.executeCommand('sudo -l')
+        if sudo_list:
+          if not re.search('.*sg_inq.*', sudo_list):
+            raise Exception() # don't attempt sudo sg_inq
         else:
-          # use sudo sg_inq -i <device>
-          for line in output.splitlines():
-            if re.search('.*EMC.*', line):
-              disk = line.split()[-1]
-              sg_inq(disk)
-      else:
-        msg = 'Could not attain lsscsi version number'
-        log.warning(msg)
-        result.warning(msg)
-        raise CommandNotFoundError(msg)
-
+          raise Exception() # don't attempt sudo sg_inq
+        
+        # use sudo sg_inq -i <device>
+        for line in output.splitlines():
+          if re.search('.*EMC.*', line):
+            disk = line.split()[-1]
+            sg_inq(disk)
+      except:
+        log.warning('Failed to run sudo sg_inq on target')
+        # get lsscsi version to decide how to proceed
+        version = sensorhelper.executeCommand('lsscsi -V 2>&1')
+        myresults = [] # store results at the end if all disk queries are successful
+        if version:
+          version = Decimal(version.split()[1])
+          if version > Decimal('0.26'):
+            # use lsscsi --scsi_id
+            for line in output.splitlines():
+              if re.search('.*EMC.*', line):
+                disk = line.split()[-1]
+                scsi_output = sensorhelper.executeCommand('lsscsi --scsi_id | grep "' + disk +'"')
+                if scsi_output:
+                  # parse out UUID
+                  uuid = scsi_output.split()[-1]
+                  # the scsi_id has a leading character '3'
+                  if len(uuid) == 33:
+                    uuid = uuid[1:]
+                  uuid = uuid.upper()
+                  log.debug('uuid: ' + uuid)
+                  if uuid.startswith('6000144'):
+                    myresults + getResults(uuid, disk)
+                  else:
+                    log.warning('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid)
+                    raise CommandNotFoundError('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid) # abort
+                else:
+                  log.warning('No output from lsscsi --scsi_id for ' + disk)
+                  # abort
+                  raise CommandNotFoundError('No output from lsscsi --scsi_id for ' + disk)
+          elif version == Decimal('0.26'):
+            # use lsscsi --wwn
+            for line in output.splitlines():
+              if re.search('.*EMC.*', line):
+                disk = line.split()[-1]
+                wwnOutput = sensorhelper.executeCommand('lsscsi --wwn | grep "' + disk + '" | awk \'{print $3}\'')
+                if wwnOutput:
+                  # parse out UUID
+                  uuid = wwnOutput.strip()
+                  if uuid.startswith('0x'):
+                    uuid = uuid[2:]
+                  uuid = uuid.upper()
+                  log.debug('uuid: ' + uuid)
+                  if uuid.startswith('6000144'):
+                    myresults + getResults(uuid, disk)
+                  else:
+                    # TODO add result warning that Invista disk not found
+                    log.warning('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid)
+                    raise CommandNotFoundError('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid) # abort
+                else:
+                  log.warning('Failed to use lsscsi command to get disk output. Configure sudo for sg_inq to resolve.')
+                  raise CommandNotFoundError('Failed to use lsscsi command to get disk output. Configure sudo for sg_inq to resolve.')
+          else:
+            log.warning('Failed to use lsscsi command to get disk output. Configure sudo for sg_inq to resolve.')
+        else:
+          msg = 'Could not attain lsscsi version number'
+          log.warning(msg)
+          #result.warning(msg)
+          raise CommandNotFoundError(msg)
+        
+        # if there are no command failures, add all the results
+        for myresult in myresults:
+          result.addExtendedResult(myresult)
   log.info("RDM discovery extension ended.")
 except CommandNotFoundError:
   pass
