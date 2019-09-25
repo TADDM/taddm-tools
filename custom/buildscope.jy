@@ -1,0 +1,353 @@
+#!/usr/bin/env ../bin/jython_coll_253
+
+############### Begin Standard Header - Do not add comments here ###############
+# 
+# File:     %W%
+# Version:  %I%
+# Modified: %G% %U%
+# Build:    %R% %L%
+# 
+# Licensed Materials - Property of IBM
+# 
+# Restricted Materials of IBM
+# 
+# 5724-N55
+# 
+# (C) COPYRIGHT IBM CORP. 2007.  All Rights Reserved.
+# 
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+# 
+############################# End Standard Header ##############################
+
+'''
+Main comment block, Beginning of Script
+
+SCRIPT OVERVIEW 
+
+buildscope.jy - This script is used to create
+            scope set file from a ComputerSystem query
+
+DESCRIPTION: For version of TADDM pre-7.3, this script must be run from a discovery server.
+
+
+CAVEATS:
+
+Author:  Mat Davis
+         mdavis5@us.ibm.com
+         IBM C&SI Lab Services
+
+History:  
+    Version 1.1  -- 3/31/15 -- Made changes to handle mainframe properly
+    Version 1.0  -- 4/11/14 -- Initial Version
+
+'''
+
+VERSION = "1.1"
+
+# Standard Jython/Python Library Imports
+import sys 
+import java
+
+# from Java [additional imports - not sure why]...
+from java.lang import System
+from java.lang import Class
+from java.util import Properties
+from java.io import FileInputStream
+from java.lang import String
+from java.lang import Boolean 
+from java.lang import Runtime 
+
+# Set the Path information
+coll_home = System.getProperty("com.collation.home")
+#System.setProperty("jython.home",coll_home + "/external/jython-2.1")
+#System.setProperty("python.home",coll_home + "/external/jython-2.1")
+System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
+System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
+
+# Setting some stuff to deal with windows
+System.setProperty("taddm.dbquery",coll_home + "/bin/dbquery.sh")
+System.setProperty("taddm.win.dbquery",coll_home + "/bin/dbquery.bat")
+System.setProperty("taddm.win.api",coll_home + "/sdk/bin/api.bat")
+System.setProperty("taddm.api",coll_home + "/sdk/bin/api.sh")
+
+
+jython_home = System.getProperty("jython.home")
+sys.path.append(jython_home + "/Lib")
+sys.path.append(coll_home + "/lib/sensor-tools")
+sys.prefix = jython_home + "/Lib"
+
+# Import the TADDM Java Libraries  [Following Required for api access]
+from com.collation.platform.util import Props
+from com.collation.proxy.api.client import *
+from com.ibm.cdb.api import ApiFactory
+from com.collation.platform.util import ModelFactory
+from com.collation.platform.logger import LogFactory
+
+import TaddmHelper
+
+# More Standard Jython/Python Library Imports
+import traceback
+import string
+import re
+import jarray
+import os
+import getopt
+import pprint
+
+False = Boolean(0)
+True = Boolean(1)
+
+#  We don't want any logging (or anything to show up on the screen right now...
+
+System.setProperty("com.collation.LogFile","buildscope.log")
+
+global log
+
+log = LogFactory.getLogger("buildscope")
+
+if re.match("Windows",System.getProperty("os.name")):
+    taddm_api = System.getProperty("taddm.win.api")
+    dbquery = System.getProperty("taddm.win.dbquery")
+else:
+    taddm_api = System.getProperty("taddm.api")
+    dbquery = System.getProperty("taddm.dbquery")
+
+def usage():
+    print >> sys.stderr, """ \
+usage: buildscope.jy [options]
+
+    For version of TADDM pre-7.3, this script must be run from a discovery server.
+
+    Options:
+    -u userid       User required to login to TADDM Server
+                    Defaults to 'administrator'
+
+    -p password     Password for TADDM Server user
+                    Defaults to 'collation'
+                    
+    -H host         Hostname for connection
+                    Defaults to 'localhost'
+
+    -P              Include private IP addresses in scope
+                    Default is to exclude all private IP addresses
+
+    -q query        [REQUIRED] MQL query where the result is ComputerSystem instances
+                    Recommended that ipInterfaces, fqdn, and name attributes queried
+
+    -h              print this message
+
+"""
+
+########################
+# LogError      Error logger
+########################
+def LogError(msg):
+        log.error(msg)
+        (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+        traceback.print_exc(ErrorTB)
+
+########################
+# LogInfo
+########################
+def LogInfo(msg):
+        log.info(msg)
+
+########################
+# LogDebug
+########################
+def LogDebug(msg):
+        log.debug(msg)
+#=====================================================================================
+#   MAIN 
+#=====================================================================================
+
+if __name__ == "__main__":
+
+    #
+    # Handle the options
+    #
+    try:    
+        opts, args = getopt.getopt(sys.argv[1:], "u:p:hH:q:l:P", ["help"])
+    except getopt.GetoptError, err:
+        # print help information and exit:
+        print >> sys.stderr, str(err) # will print something like "option -a not recognized"
+        usage()
+        sys.exit(2)
+    userid = None
+    password = None
+    host = None
+    query = None
+    limit = None
+    private = 0
+    for o, a in opts:
+        if o == "-u":
+            userid = a
+        elif o == "-p":
+            password = a
+        elif o == "-H":
+            host = a
+        elif o == "-q":
+            query = a
+        elif o == "-P":
+            private = 1
+        elif o == "-l":
+            print >> sys.stderr, 'Secret limit parameter being set to', a
+            limit = int(a)
+        elif o in ("-h", "--help"):
+            usage() 
+            sys.exit()
+        else:   
+            assert False, "unhandled option"
+
+    if host is None: 
+        host = "localhost"       # we default to localhost
+
+    if userid is None: 
+        userid = "administrator"
+
+    if password is None: 
+        password = "collation"
+        
+    if query is None:
+        print >> sys.stderr, '-q query option is required'
+        usage()
+        sys.exit(2)
+
+    LogDebug("Creating TADDM API Connection")
+    conn = ApiFactory.getInstance().getApiConnection(Props.getRmiBindHostname(),-1,None,0)
+    sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
+    api = sess.createCMDBApi()
+    LogDebug("TADDM API Connection CREATED")
+
+    print >> sys.stderr, '**** Creating the scope ****'
+
+    # regex pattern for private IP addresses
+    privatepattern = r'(10\..*)|(172\.1[6-9]\..*)|(172\.2[0-9]\..*)|(172\.3[0-1]\..*)|(192\.168\..*)'
+    
+    data = api.executeQuery(query,1,None,None)
+    scopecount = 0
+    while data.next():
+        
+        if limit is not None and scopecount > limit:
+            print >> sys.stderr, 'Limit of',str(limit),'scopes hit, halting scope building'
+            break
+            
+        hasIpInterfaces = 0
+        try:
+            if data.hasAttribute('ipInterfaces'):
+                hasIpInterfaces = 1
+        except:
+            print >> sys.stderr, '** WARNING ** ipInterfaces attribute is not queried'
+            
+        if hasIpInterfaces:
+            cs = data.getModelObject(2)
+            ipInterfaces = cs.getIpInterfaces()
+            # get hostname
+            if cs.hasFqdn():
+                hostname = cs.getFqdn()
+            elif cs.hasName():
+                hostname = cs.getName()
+            else:
+                hostname = ''
+            # print all non localhost addresses to scope
+            ips = []
+            for ipInterface in ipInterfaces:
+                ip = ipInterface.getDisplayName()
+                if '127.0.0.1' != ip and '0:0:0:0:0:0:0:1' != ip and '0.0.0.0' != ip:
+                    ips.append(ip)
+
+            # if one of the IP addresses matches the contextIp then only use that one
+            if cs.hasContextIp():
+                contextIp = cs.getContextIp()
+                if contextIp in ips:
+                    ips = [contextIp]
+            
+            # remove private IP
+            if private == 0:
+                for ip in ips:
+                    # check for private addresses
+                    if re.match(privatepattern, ip) is not None:
+                        print >> sys.stderr, 'Skipping private address', ip
+                        ips.remove(ip) # remove private ip from list
+                        
+            # we have more than one IP address, check contextIp of fileSystem instances to see
+            # a good context IP is found there, the assumption is that the CS sensor discovers
+            # the fileSystem while the high level sensor (vCenter, HMC, etc) might not
+            if len(ips) > 1 and cs.hasFileSystems():
+                fileSystems = cs.getFileSystems()
+                for fileSystem in fileSystems:
+                    if fileSystem.hasContextIp():
+                        contextIp = fileSystem.getContextIp()
+                        if contextIp in ips:
+                            #print >> sys.stderr, 'TEST - FOUND CONTEXTIP'
+                            ips = [contextIp]
+                            break
+
+            # if zOS LPAR with many IP addresses, use the one that matches signature
+            if len(ips) > 1 and TaddmHelper.get_class_name(cs) == 'LPAR'and cs.hasSignature():
+                signature = cs.getSignature()
+                if signature in ips:
+                    ips = [signature]
+
+            # print ip addresses    
+            for ip in ips:
+                scopecount += 1
+                print ip + ',,' + hostname
+            
+            if len(ips) > 0:
+                continue # found an IP address, don't need to do DNS lookup
+            
+        # continue with DNS lookup because no IP address was found
+        cs = data.getModelObject(1)
+        #print >> sys.stderr, 'No IP found, using DNA lookup'
+        if cs.hasFqdn():
+            hostname = cs.getFqdn()
+            try:
+                ia = java.net.InetAddress.getByName(hostname)
+                ip = ia.getHostAddress()
+                if private == 0 and re.match(privatepattern, ip) is None:
+                    scopecount += 1
+                    print ip + ',,' + hostname
+                else:
+                    print >> sys.stderr, 'After DNS lookup, skipping private address', ip
+            except:
+                if cs.hasName():
+                    name = cs.getName()
+                    try:
+                        ia = java.net.InetAddress.getByName(name)
+                        ip = ia.getHostAddress()
+                        if private == 0 and re.match(privatepattern, ip) is None:
+                            scopecount += 1
+                            print ip + ',,' + hostname
+                        else:
+                            print >> sys.stderr, 'After DNS lookup, skipping private address', ip
+                    except:
+                        print >> sys.stderr, 'Address lookup failed for',hostname
+                else:
+                    print >> sys.stderr, 'Address lookup failed for', hostname
+        else:
+            if cs.hasName():
+                name = cs.getName()
+                # skip the mainframe
+                if TaddmHelper.get_class_name(cs) == 'ZSeriesComputerSystem':
+                    print >> sys.stderr, 'Skipping mainframe',name
+                    continue
+                # skip storage on mainframe
+                if TaddmHelper.get_class_name(cs) == 'StorageSubSystem':
+                    print >> sys.stderr, 'Skipping storage on mainframe',name
+                    continue
+                try:
+                    ia = java.net.InetAddress.getByName(name)
+                    ip = ia.getHostAddress()
+                    if private == 0 and re.match(privatepattern, ip) is None:
+                        scopecount += 1
+                        print ip + ',,' + name
+                    else:
+                        print >> sys.stderr, 'After DNS lookup, skipping private address', ip
+                except:
+                    print >> sys.stderr, 'Address lookup failed for', name
+            else:
+                print >> sys.stderr, 'Name and fqdn not available for',str(cs.getGuid())
+    sys.exit(0) 
+
