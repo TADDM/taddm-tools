@@ -1,4 +1,3 @@
-
 ############### Begin Standard Header - Do not add comments here ##
 # Licensed Materials - Property of IBM
 # 5724-N55
@@ -69,28 +68,25 @@ def LogError(msg):
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
   traceback.print_exc(ErrorTB)
 
+sudo_list = None
 def validateSudo(cmd=None):
   try:
     if cmd:
-      output = sensorhelper.executeCommand('sudo -l 2>&1')
+      global sudo_list
+      if sudo_list is None:
+        sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
       # look for line containing (root) NOPASSWD: .*cmd.*
-      regex = re.compile('\(root\) NOPASSWD: .*' + cmd + '.*', re.MULTILINE)
-      if regex.search(output):
+      regex = re.compile('\(((root)|(ALL))\) NOPASSWD: .*' + cmd + '.*', re.MULTILINE | re.DOTALL)
+      if regex.search(sudo_list):
         return True
       else:
         return False
     else:
-      output = sensorhelper.executeCommand('sudo -v 2>&1;echo -n')
-      global requiretty
-      if re.search('.*sudo: sorry, you must have a tty to run sudo.*', output):
-        requiretty = True
-        return False
-      elif re.search('.*Sorry, user .* may not run sudo on .*\..*', output):
-        return False
-      else:
-        log.debug('match not found')
+      try:
+        sudo_list = sensorhelper.executeCommand('sudo -l 2>&1')
         return True
-    return True
+      except:
+        return False
   except:
     return False
 
@@ -104,28 +100,34 @@ try:
 
   log.info("sudo discovery extension started (written by Mat Davis - mdavis5@us.ibm.com)")
 
+  is_virtual = True # assume virtual
+  if computersystem.hasModel() and not 'virtual' in computersystem.getModel().lower():
+    is_virtual = False # model is set and does not contain 'virtual'
+    
   xa = {}
-  requiretty = None
+  xa['sudo_hba'] = ''
+  xa['sudo_lsof'] = ''
+  xa['sudo_requiretty'] = ''
+
   if validateSudo() is False:
     # sudo is not set up for this host
     log.info('sudo is invalid')
     xa['sudo_verified'] = 'invalid'
   else:
-    requiretty = False
     log.info('sudo is valid')
     xa['sudo_verified'] = 'valid'
     if validateSudo('lsof') is False:
-      log.info('sudo lsof is invalid')
       xa['sudo_lsof'] = 'invalid'
     else:
-      log.info('sudo lsof is valid')
       xa['sudo_lsof'] = 'valid'
-  if requiretty is True:
-    log.info('requiretty invalid')
-    xa['sudo_requiretty'] = 'invalid'
-  elif requiretty is False:
-    log.info('requiretty is valid')
-    xa['sudo_requiretty'] = 'valid'
+    log.info('sudo lsof is ' + str(xa['sudo_lsof']))
+    # if physical host check for collection-engine in sudo
+    if is_virtual is False:
+      if validateSudo('collectionengine'):
+        xa['sudo_hba'] = 'valid'
+      else:
+        xa['sudo_hba'] = 'invalid'
+      log.info('sudo hba (collectionengine) is ' + str(xa['sudo_hba']))
 
   sensorhelper.setExtendedAttributes(computersystem, xa)
   log.info("sudo discovery extension ended")
