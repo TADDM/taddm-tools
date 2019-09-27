@@ -41,7 +41,7 @@ class getEvents:
     file = File(fileName);
     if (file.exists()):
       fileInputStream = FileInputStream(fileName);
-      ois = ObjectInputStream(fileInputStream);
+      ois = java.io.ObjectInputStream(fileInputStream);
       while (1) :
         try:
           event = ois.readObject();
