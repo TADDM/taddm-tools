@@ -107,7 +107,6 @@ try:
   xa = {}
   xa['sudo_hba'] = ''
   xa['sudo_lsof'] = ''
-  xa['sudo_requiretty'] = ''
 
   if validateSudo() is False:
     # sudo is not set up for this host
