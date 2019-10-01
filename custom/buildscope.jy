@@ -250,6 +250,12 @@ if __name__ == "__main__":
                 hostname = cs.getName()
             else:
                 hostname = ''
+
+            if cs.hasModel():
+                model = cs.getModel()
+            else:
+                model = ''
+
             # print all non localhost addresses to scope
             ips = []
             for ipInterface in ipInterfaces:
@@ -285,7 +291,7 @@ if __name__ == "__main__":
                             break
 
             # if zOS LPAR with many IP addresses, use the one that matches signature
-            if len(ips) > 1 and TaddmHelper.get_class_name(cs) == 'LPAR'and cs.hasSignature():
+            if len(ips) > 1 and TaddmHelper.get_class_name(cs) == 'LPAR' and cs.hasSignature():
                 signature = cs.getSignature()
                 if signature in ips:
                     ips = [signature]
@@ -293,7 +299,7 @@ if __name__ == "__main__":
             # print ip addresses    
             for ip in ips:
                 scopecount += 1
-                print ip + ',,' + hostname
+                print ip + ',,' + hostname + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
             
             if len(ips) > 0:
                 continue # found an IP address, don't need to do DNS lookup
@@ -308,7 +314,7 @@ if __name__ == "__main__":
                 ip = ia.getHostAddress()
                 if private == 0 and re.match(privatepattern, ip) is None:
                     scopecount += 1
-                    print ip + ',,' + hostname
+                    print ip + ',,' + hostname + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
                 else:
                     print >> sys.stderr, 'After DNS lookup, skipping private address', ip
             except:
@@ -319,7 +325,7 @@ if __name__ == "__main__":
                         ip = ia.getHostAddress()
                         if private == 0 and re.match(privatepattern, ip) is None:
                             scopecount += 1
-                            print ip + ',,' + hostname
+                            print ip + ',,' + hostname + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
                         else:
                             print >> sys.stderr, 'After DNS lookup, skipping private address', ip
                     except:
@@ -342,7 +348,7 @@ if __name__ == "__main__":
                     ip = ia.getHostAddress()
                     if private == 0 and re.match(privatepattern, ip) is None:
                         scopecount += 1
-                        print ip + ',,' + name
+                        print ip + ',,' + name + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
                     else:
                         print >> sys.stderr, 'After DNS lookup, skipping private address', ip
                 except:
