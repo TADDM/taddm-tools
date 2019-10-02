@@ -130,10 +130,16 @@ try:
 
   log.info('Is server virtual? ' + str(is_virtual))
   
+  is_vmware = False
+  if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform'):
+    is_vmware = True
+  log.info('Is server VMware? ' + str(is_vmware))
+  
   xa = {}
   xa['sudo_hba'] = '' # for collectionengine and fcinfo on Solaris
   xa['sudo_lsof'] = ''
   xa['sudo_dmidecode'] = ''
+  xa['sudo_rdm'] = ''
 
   if validateSudo() is False:
     # sudo is not set up for this host
@@ -177,7 +183,29 @@ try:
         xa['sudo_dmidecode'] = 'valid'
       else:
         xa['sudo_dmidecode'] = 'invalid'
+      log.info('sudo dmidecode is ' + str(xa['sudo_dmidecode']))
+      
+      if is_vmware:
+        # VMware Linux VM
+        lsscsi_out = ''
+        try:
+          log.info('Running lsscsi on VMware Linux VM to look for RDMs')
+          lsscsi_out = sensorhelper.executeCommand('lsscsi')
+        except:
+          log.info('lsscsi command failed')
+          pass
         
+        if re.search('.*EMC.*', lsscsi_out):
+          log.info('Linux VM contains RDM, checking if sg_inq in sudo')
+          if validateSudo('sg_inq'):
+            xa['sudo_rdm'] = 'valid'
+          else:
+            log.info('sg_inq for RDM.py discovery extension not found in sudo')
+            xa['sudo_rdm'] = 'invalid'
+          log.info('sudo sg_inq is ' + str(xa['sudo_rdm']))
+        else:
+          log.info('lsscsi output does not contain RDM')
+              
   sensorhelper.setExtendedAttributes(computersystem, xa)
   log.info("sudo discovery extension ended")
 except:
