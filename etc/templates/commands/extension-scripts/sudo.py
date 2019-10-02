@@ -54,19 +54,37 @@ import re
 import sensorhelper
 
 ########################################################
-# Some default GLOBAL Values (Typically these should be in ALL CAPS)
-# Jython does not have booleans
-########################################################
-True = 1
-False = 0
-
-########################################################
 # LogError Error Logging
 ########################################################
 def LogError(msg):
   log.error(msg)
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
   traceback.print_exc(ErrorTB)
+
+def get_class_name(model_object):
+  cn = model_object.__class__.__name__
+  real_class_name=cn.replace("Impl","")
+  return real_class_name
+
+# copied from ext_attr_helper because of CNF error while running on anchor
+def get_os_type(os_handle):
+  '''
+  Return OS we are on --> UNIX or WINDOWS
+  '''
+  cs = sensorhelper.getComputerSystem(os_handle)
+  class_name = get_class_name(cs)
+  #LogInfo("OS Classname is:  " + str(class_name))
+  if re.search("Linux",class_name,re.I):
+    os_type = "Linux"
+  elif re.search("Windows",class_name,re.I):
+    os_type = "Windows"
+  elif re.search("AIX",class_name,re.I):
+    os_type = "Aix"
+  elif re.search("Sun",class_name,re.I):
+    os_type = "Sun"
+  else:
+    os_type = "UNKNOWN"
+  return os_type
 
 sudo_list = None
 def validateSudo(cmd=None):
@@ -102,11 +120,20 @@ try:
 
   is_virtual = True # assume virtual
   if computersystem.hasModel() and not 'virtual' in computersystem.getModel().lower():
-    is_virtual = False # model is set and does not contain 'virtual'
-    
+    # model is set and does not contain 'virtual'
+    if computersystem.hasVirtual():
+      if not computersystem.getVirtual():
+        is_virtual = False # virtual is set to False
+    else:
+      # virtual is not set and model does not contain 'virtual'
+      is_virtual = False
+
+  log.info('Is server virtual? ' + str(is_virtual))
+  
   xa = {}
-  xa['sudo_hba'] = ''
+  xa['sudo_hba'] = '' # for collectionengine and fcinfo on Solaris
   xa['sudo_lsof'] = ''
+  xa['sudo_dmidecode'] = ''
 
   if validateSudo() is False:
     # sudo is not set up for this host
@@ -120,14 +147,37 @@ try:
     else:
       xa['sudo_lsof'] = 'valid'
     log.info('sudo lsof is ' + str(xa['sudo_lsof']))
-    # if physical host check for collection-engine in sudo
+    
+    os_type = get_os_type(os_handle)
+    # if physical host check for collectionengine in sudo
     if is_virtual is False:
-      if validateSudo('collectionengine'):
-        xa['sudo_hba'] = 'valid'
+      log.info('Checking for HBA discovery commands on physical server')
+      ce = 'collectionengine'
+      if "Linux" == os_type:
+        ce = 'collectionengine-linux'
+      elif "Sun" == os_type:
+        ce = 'collectionengine-solaris-sparc'
+        
+      if validateSudo(ce):
+        log.info(ce + ' found in sudo')
+        # check for fcinfo on Sun required by SolarisFC.py ext
+        if "Sun" == os_type and validateSudo('fcinfo') is False:
+          log.info('fcinfo for SolarisFC.py discovery extension not found in sudo')
+          xa['sudo_hba'] = 'invalid'
+        else:
+          xa['sudo_hba'] = 'valid'
       else:
+        log.info(ce + ' not found in sudo')
         xa['sudo_hba'] = 'invalid'
       log.info('sudo hba (collectionengine) is ' + str(xa['sudo_hba']))
 
+    # check for dmidecode on Linux
+    if "Linux" == os_type:
+      if validateSudo('dmidecode'):
+        xa['sudo_dmidecode'] = 'valid'
+      else:
+        xa['sudo_dmidecode'] = 'invalid'
+        
   sensorhelper.setExtendedAttributes(computersystem, xa)
   log.info("sudo discovery extension ended")
 except:
