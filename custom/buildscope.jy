@@ -37,7 +37,8 @@ Author:  Mat Davis
          mdavis5@us.ibm.com
          IBM C&SI Lab Services
 
-History:  
+History:
+    Version 1.2  -- 10/2/19 -- Added platform to output and made description unique 
     Version 1.1  -- 3/31/15 -- Made changes to handle mainframe properly
     Version 1.0  -- 4/11/14 -- Initial Version
 
@@ -158,6 +159,26 @@ def LogInfo(msg):
 ########################
 def LogDebug(msg):
         log.debug(msg)
+        
+def get_os_type(cs):
+  '''
+  Return OS for cs --> UNIX or WINDOWS
+  '''
+  class_name = TaddmHelper.get_class_name(cs)
+  if re.search("Linux",class_name,re.I):
+    os_type = "Linux"
+  elif re.search("Windows",class_name,re.I):
+    os_type = "Windows"
+  elif re.search("AIX",class_name,re.I):
+    os_type = "Aix"
+  elif re.search("Sun",class_name,re.I):
+    os_type = "Sun"
+  elif re.search("LPAR",class_name,re.I):
+    os_type = "zOS LPAR"
+  else:
+    os_type = "UNKNOWN"
+  return os_type
+
 #=====================================================================================
 #   MAIN 
 #=====================================================================================
@@ -296,10 +317,16 @@ if __name__ == "__main__":
                 if signature in ips:
                     ips = [signature]
 
-            # print ip addresses    
+            # print ip addresses  
+            ipcount = 0
             for ip in ips:
                 scopecount += 1
-                print ip + ',,' + hostname + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
+                ipcount += 1
+                description = hostname
+                if len(ips) > 1:
+                  description += ' (' + str(ipcount) + ')'
+                description += ' - ' + get_os_type(cs)
+                print ip + ',,' + description
             
             if len(ips) > 0:
                 continue # found an IP address, don't need to do DNS lookup
@@ -314,7 +341,8 @@ if __name__ == "__main__":
                 ip = ia.getHostAddress()
                 if private == 0 and re.match(privatepattern, ip) is None:
                     scopecount += 1
-                    print ip + ',,' + hostname + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
+                    description = hostname + ' - ' + get_os_type(cs)
+                    print ip + ',,' + description
                 else:
                     print >> sys.stderr, 'After DNS lookup, skipping private address', ip
             except:
@@ -325,7 +353,8 @@ if __name__ == "__main__":
                         ip = ia.getHostAddress()
                         if private == 0 and re.match(privatepattern, ip) is None:
                             scopecount += 1
-                            print ip + ',,' + hostname + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
+                            description = hostname + ' - ' + get_os_type(cs)
+                            print ip + ',,' + description
                         else:
                             print >> sys.stderr, 'After DNS lookup, skipping private address', ip
                     except:
@@ -348,7 +377,8 @@ if __name__ == "__main__":
                     ip = ia.getHostAddress()
                     if private == 0 and re.match(privatepattern, ip) is None:
                         scopecount += 1
-                        print ip + ',,' + name + ' - ' + TaddmHelper.get_class_name(cs).replace('ComputerSystem', '').replace('Unitary', '').replace('SunSPARC', 'Solaris')
+                        description = name + ' - ' + get_os_type(cs)
+                        print ip + ',,' + description
                     else:
                         print >> sys.stderr, 'After DNS lookup, skipping private address', ip
                 except:
