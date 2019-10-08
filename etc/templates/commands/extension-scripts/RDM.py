@@ -61,13 +61,6 @@ import re
 import sensorhelper
 
 ########################################################
-# Some default GLOBAL Values (Typically these should be in ALL CAPS)
-# Jython does not have booleans
-########################################################
-True = 1
-False = 0
-
-########################################################
 # LogError Error Logging
 ########################################################
 def LogError(msg):
@@ -82,44 +75,28 @@ class CommandNotFoundError(Exception):
     return repr(self.value)
 
 # build out result model objects and return as list
-def getResults(uuid, disk):
-  results = []
+def buildVolume(uuid, disk):
   
   vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
   # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
   # have been using it all over the place as a hack
   vsv.setManagedSystemName(uuid)
   log.debug('VPLEX volume:' + str(vsv))
-  #results.append(vsv)
   
-  fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
-  fcv.setName(disk.split('/')[-1])
-  fcv.setDeviceID(disk)
-  fcv.setDescription('RDM')
-  fcv.setParent(cs)
+  scsi_vol = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
+  scsi_vol.setName(disk.split('/')[-1])
+  scsi_vol.setDeviceID(disk)
+  scsi_vol.setDescription('RDM')
+  scsi_vol.setParent(computersystem)
   # create relationships
   bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-  bo.setSource(fcv)
+  bo.setSource(scsi_vol)
   bo.setTarget(vsv)
   bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-  fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-  log.debug('SCSI volume:' + str(fcv))
-  results.append(fcv)
+  scsi_vol.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
+  log.debug('SCSI volume:' + str(scsi_vol))
   
-  # redefine so basedOn not included twice
-  fcv = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
-  fcv.setName(disk.split('/')[-1])
-  fcv.setDeviceID(disk)
-  fcv.setDescription('RDM')
-  fcv.setParent(cs)
-
-  realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-  realizes.setSource(vsv)
-  realizes.setTarget(fcv)
-  realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-  results.append(realizes)
-  
-  return results
+  return scsi_vol
  
 def sg_inq(disk):
   sg_inq_output = sensorhelper.executeCommand('sudo sg_inq -i ' + disk)
@@ -134,14 +111,15 @@ def sg_inq(disk):
       uuid = uuid.upper()
       log.debug('uuid: ' + uuid)
       if uuid.startswith('6000144'):
-        for r in getResults(uuid, disk):
-          result.addExtendedResult(r)
+        return buildVolume(uuid, disk)
       else:
         # TODO add result warning that Invista disk not found
         log.warning('WWN does not start with 6000144:' + uuid)
     else:
       log.warning('Could not find UUID in sq_inq output for ' + disk)
 
+  return None
+  
 ##########################################################
 # Main
 # Setup the various objects required for the extension
@@ -154,18 +132,6 @@ try:
 
   if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform'):
   
-    # build skinny computersystem for storage performance
-    cs = sensorhelper.newModelObject('cdm:sys.linux.LinuxUnitaryComputerSystem')
-    if computersystem.hasSignature():
-      cs.setSignature(computersystem.getSignature())
-    elif computersystem.hasSerialNumber() and computersystem.hasModel() and computersystem.hasManufacturer():
-      cs.setSerialNumber(computersystem.getSerialNumber())
-      cs.setModel(computersystem.getModel())
-      cs.setManufacturer(computersystem.getManufacturer())
-    else:
-      log.info('Could not find naming rules to build skinny computer system, storage performance might suffer from using full computer system')
-      cs = computersystem
-    
     try:
       output = sensorhelper.executeCommand('lsscsi')
     except:
@@ -174,6 +140,7 @@ try:
 
     # check if there are any EMC Invista disks
     if re.search('.*EMC.*', output):
+      rdm_volumes = []
       try:
         # check if sudo is configured for sg_inq first, this way we won't trigger
         # a sudo alert if we run it and it fails
@@ -188,12 +155,13 @@ try:
         for line in output.splitlines():
           if re.search('.*EMC.*', line):
             disk = line.split()[-1]
-            sg_inq(disk)
+            scsi_vol = sg_inq(disk)
+            if scsi_vol:
+              rdm_volumes.append(scsi_vol)
       except:
         log.warning('Failed to run sudo sg_inq on target')
         # get lsscsi version to decide how to proceed
         version = sensorhelper.executeCommand('lsscsi -V 2>&1')
-        myresults = [] # store results at the end if all disk queries are successful
         if version:
           version = Decimal(version.split()[1])
           if version > Decimal('0.26'):
@@ -211,7 +179,7 @@ try:
                   uuid = uuid.upper()
                   log.debug('uuid: ' + uuid)
                   if uuid.startswith('6000144'):
-                    myresults + getResults(uuid, disk)
+                    rdm_volumes.append(buildVolume(uuid, disk))
                   else:
                     log.warning('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid)
                     raise CommandNotFoundError('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid) # abort
@@ -233,7 +201,7 @@ try:
                   uuid = uuid.upper()
                   log.debug('uuid: ' + uuid)
                   if uuid.startswith('6000144'):
-                    myresults + getResults(uuid, disk)
+                    rdm_volumes.append(buildVolume(uuid, disk))
                   else:
                     # TODO add result warning that Invista disk not found
                     log.warning('WWN not in proper format, starting with 6000144 and 32 hex digits:' + uuid)
@@ -248,10 +216,45 @@ try:
           log.warning(msg)
           #result.warning(msg)
           raise CommandNotFoundError(msg)
+      
+      # if any RDM volumes discovered, we continue
+      if len(rdm_volumes) > 0:
+        extents = []
+        local_disks = os_handle.getLocalDiskVolumes()
+        if local_disks:
+          for local_disk in local_disks:
+            log.info('disk=' + str(local_disk))
+            match = False
+            for rdm_vol in rdm_volumes:
+              if rdm_vol.getName() == local_disk.getName():
+                log.info('Found matching RDM disk')
+                extents.append(rdm_vol)
+                rdm_volumes.remove(rdm_vol) # remove from list
+                match = True
+                break
+            if not match:
+              extents.append(local_disk)
+        partitions = os_handle.getDiskPartitions()
+        if partitions:
+          for partition in partitions:
+            log.info('partition=' + str(partition))
+            extents.append(partition)
+        try:
+          volumes = os_handle.getStorageVolumes()
+          if volumes:
+            for volume in volumes:
+              log.info('storage volume=' + str(volume))
+              extents.append(volume)
+        except:
+          log.info('Unable to find Storage Volumes')
+
+        # if there are any RDM volumes left then add to the end of the list
+        for rdm_vol in rdm_volumes:
+          log.info('Adding additional RDM volume=' + str(rdm_vol))
+          extents.append(rdm_vol)
+
+        computersystem.setStorageExtent(sensorhelper.getArray(extents, 'cdm:dev.StorageExtent'))
         
-        # if there are no command failures, add all the results
-        for myresult in myresults:
-          result.addExtendedResult(myresult)
   log.info("RDM discovery extension ended.")
 except CommandNotFoundError:
   pass
