@@ -5,6 +5,7 @@
 !.gitignore
 !custom
 !etc
+!osgi
 
 # files
 **.log

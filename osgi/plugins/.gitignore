@@ -1,0 +1,6 @@
+# ignore everything
+/*
+
+# except
+!.gitignore
+!com.ibm.cdb.discover.sensor.app.srm.emc.vipr_1.0.0
