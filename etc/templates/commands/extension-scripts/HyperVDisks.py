@@ -121,14 +121,16 @@ try:
       uuid = line.split('=')[1].split(' ')[0]
       if len(line.split(' ')) > 3:
         vvol = line.split(' ')[3].replace('[', '').replace(']','')
+      elif len(line.split()) > 2:
+        vvol = None
       else:
-        log.debug('Skipping line missing volume information: ' + line)
+        log.info('Skipping line missing volume information: ' + line)
         disk = None
         vplexid = None
         uuid = None
         continue
       if disk and vplexid:
-        log.debug(str(disk) + ' ' + str(vplexid) + ' ' + str(uuid) + ' ' + str(vvol))
+        log.info(str(disk) + ' ' + str(vplexid) + ' ' + str(uuid) + ' ' + str(vvol))
         
         if vplexid in vplexes:
           # VPlex already defined
@@ -149,9 +151,8 @@ try:
           vplexes[vplexid] = sss # cache sss
 
         vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-        # don't set parent, helps with storage performance
-        #vsv.setParent(sss)
-        vsv.setName(vvol)
+        if vvol:
+          vsv.setName(vvol)
         vsv.setVirtual(True)
         # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
         # have been using it all over the place as a hack
@@ -159,7 +160,7 @@ try:
         
         # do not set members array, ViPR sensor extension will set this
         
-        result.addExtendedResult(vsv)
+        #result.addExtendedResult(vsv)
         
         fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
         fcv.setName('Disk ' + disk)
@@ -172,6 +173,16 @@ try:
         fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
         result.addExtendedResult(fcv)
         
+        vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+        if vvol:
+          vsv.setName(vvol)
+        vsv.setVirtual(True)
+        # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
+        # have been using it all over the place as a hack
+        vsv.setManagedSystemName(uuid)
+        fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
+        fcv.setName('Disk ' + disk)
+        fcv.setParent(cs)
         realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
         realizes.setSource(vsv)
         realizes.setTarget(fcv)
