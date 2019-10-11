@@ -136,7 +136,7 @@ def main():
     # Initialize
     #
     api = ea.get_taddm_api(Props.getRmiBindHostname(), userid, password)
-    attr_names = [ 'sudo_verified', 'sudo_lsof', 'sudo_hba' ]
+    attr_names = [ 'sudo_verified', 'sudo_lsof', 'sudo_dmidecode', 'sudo_hba', 'sudo_rdm' ]
     for attr_name in attr_names:
       print 'Creating ' + attr_name + ' String EA on UnitaryComputerSystem'
       created = ea.createExtendedAttributes(api, attr_name, 'String', 'com.collation.platform.model.topology.sys.UnitaryComputerSystem')

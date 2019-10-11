@@ -62,15 +62,15 @@ sc.init(None, [ TrustManager() ], None)
 HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory())
 HttpsURLConnection.setDefaultHostnameVerifier(MyHostnameVerify())
 
-def getConnection(url):
+def getConnection(url, timeout = 30000):
   log.info('url='+url)
   siteURL = URL(url)
   conn = siteURL.openConnection()
   userpassword = java.lang.String(java.lang.StringBuilder().append(username).append(':').append(password).toString())
   encodedUserPassword = DatatypeConverter.printBase64Binary(userpassword.getBytes(StandardCharsets.UTF_8))
   conn.setRequestProperty("Authorization", java.lang.StringBuilder().append("Basic ").append(encodedUserPassword).toString())
-  conn.setConnectTimeout(30000)
-  conn.setReadTimeout(30000)
+  conn.setConnectTimeout(timeout)
+  conn.setReadTimeout(timeout)
   conn.setRequestMethod("GET")
   conn.setUseCaches(False)
   conn.setDoInput(True)
@@ -104,7 +104,7 @@ def getSeriesValues(filter, properties):
   startTime = str(sdf.format(c.getTime())) + 'T00:00:00'
   url = ('https://' + ip + ':' + str(sslport) + '/APG-REST/metrics/series/values?limit=10000&' +
          filter + '&period=86400&start=' + startTime + '&end=' + endTime + '&' + properties)
-  conn = getConnection(url)
+  conn = getConnection(url, 60000) # use 60 second timeout for series because there can be more data
   return getValues(conn)
   
 def getPropertiesValues(filter, fields):
@@ -143,7 +143,7 @@ def getArrayLuns():
   
 def getVirtualVolumes(device):
   # if you include psvclvl in the query it removes a vvol if the service level is null
-  # In ViPR UI volumes withere view = 'N/A' are not shown but they are shown in reporting so we are including here
+  # In ViPR UI volumes with view = 'N/A' are not shown but they are shown in reporting so we are including here
   fields = 'fields=device,vvol,psvclvl,partsn'
   #filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27%26%21view%3D%27N/A%27'+
   filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27'+
@@ -211,12 +211,11 @@ def padDiskNumber(diskname):
 # for development purposes, skip storage of results that are not commented
 skipStorage = {}
 #skipStorage['VNX'] = True
-#skipStorage['RDM'] = True
 #skipStorage['VPlex'] = True
 #skipStorage['XtremIO'] = True
 #skipStorage['Unity'] = True
 #skipStorage['Switch'] = True
-#skipStorage['Solaris'] = True
+skipStorage['Solaris'] = True
 
 def storeResult(mo, type):
   if type in skipStorage: # skip storage if key listed
@@ -261,7 +260,8 @@ def getVolumeCapacities(arraySerial, property, parttype = 'LUN'):
         msg = 'Volume capacity values not found for array with serial ' + arraySerial
         log.warning(msg)
         ctsResult.warning(msg)
-  except Exception, e:
+  except: # catch all errors because we don't want to halt on volume capacity query errors
+    e = sys.exc_info()[0]
     msg = 'Error occurred during volume capacity query, capacity values not updated for ' + arraytyp + ' array ' + sss.getFqdn()
     log.warning(msg)
     log.info('Error : ' + str(e))
@@ -290,6 +290,28 @@ def setVolumeCapacity(sv, name, volumeCapMap, volumeUsedCapMap, blksize = 512):
           # TODO should we make this negative if usedCap > cap
           sv.setFreeSpace(long(0))
 
+def create_skinny_vvol(serialnb, vvol):
+  vsv = None
+  if serialnb + vvol in uuidBySerialVol:
+    uuid = uuidBySerialVol[serialnb + vvol] # uuidBySerialVol is global mapping
+    #log.debug('Processing connection from ' + uuid + ' and ' + array_vol_wwn)
+    
+    # create skinny volume for storage performance
+    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+    vsv.setManagedSystemName(uuid)
+  else:
+    #log.debug('Processing connection from ' + vvol + ' and ' + array_vol_wwn)
+    # create skinny volume for storage performance
+    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+    vsv.setName(vvol)
+    
+    # create skinny VPlex for storagevolume naming rule
+    vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
+    vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))    
+    vsv.setParent(vplex)
+    
+  return vsv
+
 def set_array_to_vplex(array, array_svolume, storage_tag):
   array_vol_wwn = array_svolume.getManagedSystemName()
   vdiskinfo = vdiskByLun[array_vol_wwn]
@@ -302,23 +324,7 @@ def set_array_to_vplex(array, array_svolume, storage_tag):
     
   vdiskByLunUsed.append(array_vol_wwn) # keep track of the ones used
   
-  if serialnb + vvol in uuidBySerialVol:
-    uuid = uuidBySerialVol[serialnb + vvol]
-    #log.debug('Processing connection from ' + uuid + ' and ' + array_vol_wwn)
-    
-    # create skinny volume for storage performance
-    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-    vsv.setManagedSystemName(uuid)
-  else:
-    #log.debug('Processing connection from ' + vvol + ' and ' + array_vol_wwn)
-    # create skinny volume for storage performance
-    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-    vsv.setName(vvol)
-    
-    # create skinny VPlex
-    vplex = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-    vplex.setOpenId(OpenId(vplex).addId('vplexserial', serialnb))    
-    vsv.setParent(vplex)
+  vsv = create_skinny_vvol(serialnb, vvol)
   
   # create relationships
   bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
@@ -329,11 +335,17 @@ def set_array_to_vplex(array, array_svolume, storage_tag):
   #log.debug('Storing basedOn:' + str(vsv) + ':' + str(ssv))
   storeResult(vsv, storage_tag)
   
-  realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-  realizes.setSource(array_svolume)
-  realizes.setTarget(vsv)
-  realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-  array_svolume.setRealizedBy(realizes) # this causes StorageError without MSN set on vsv
+  # 2019-09-30: disabling realizes b/c there are some weird storage things going on
+  # and the basedOn relationship above already relates the two storage volumes
+  
+  # create another virtual volume for storage performance
+  #vsv = create_skinny_vvol(serialnb, vvol)
+  
+  #realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
+  #realizes.setSource(array_svolume)
+  #realizes.setTarget(vsv)
+  #realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
+  #array_svolume.setRealizedBy(realizes) # this causes StorageError without MSN set on vsv
   
   if not serialnb in usesRelnAdded:
     # uses relationship has not yet been added for this VPlex
@@ -424,15 +436,17 @@ try:
                 lunid = hostPath.getJsonString('lunid').getString()
                 #hostname = hostPath.getJsonString('hostname').getString()
                 #osfamily = hostPath.getJsonString('osfamily').getString()
+                log.debug('Adding host path:' + lunid + '=' + str({ 'tgtwwn': tgtwwn, 'pathname': pathname, 'inwwn': inwwn }))
                 if lunid in hostPathsByLun:
                   hostPathsArray = hostPathsByLun[lunid]
                   hostPathsArray.append({ 'tgtwwn': tgtwwn, 'pathname': pathname, 'inwwn': inwwn })
                 else:
                   hostPathsByLun[lunid] = [{ 'tgtwwn': tgtwwn, 'pathname': pathname, 'inwwn': inwwn }]
+                  
             log.debug('len(hostPathsByLun):' + str(len(hostPathsByLun)))
 
             # get windows disk information for scsi path
-            filter='filter=devtype%3D%27Host%27%26parttype%3D%27Disk%27%26devdesc=%27%25Windows%25%27%26!partsn%3D%27N/A%27'
+            filter='filter=devtype%3D%27Host%27%26parttype%3D%27Disk%27%26devdesc=%27%25Windows%25%27%26!partsn%3D%27N/A%27%26!vstatus=%27inactive%27'
             fields='fields=part,portwwn,partsn,device'
             hostDiskOutput = getPropertiesValues(filter, fields)
             hostDisksByLun = {}
@@ -450,104 +464,7 @@ try:
                   hostDisksByLun[partsn] = [{ 'part': part, 'portwwn': portwwn, 'device': device }]
             log.debug('len(hostDisksByLun):' + str(len(hostDisksByLun)))
             
-            # RDM disks
-            # get all RDM disks on VMs
-            filter='filter=devtype=%27VirtualMachine%27%26parttype=%27Virtual%20Disk%27%26dtype=%27RDM%27'
-            fields='fields=part,device,partsn,devdesc,vcenter,serialnb,scsiid,fqdn' # include vcenter to ensure we are getting VMware VMs
-            rdmOutput = getPropertiesValues(filter, fields)
-            rdmByLun = {} # RDM information by VPlex UUID
-            if rdmOutput:
-              rdms = getParsedJsonArray(rdmOutput)
-              vdisksByVM = {}
-              devicesWithBadDiskNames = []
-              for rdm in rdms:
-                device   =  rdm.getJsonString('device').getString()
-                part     =  rdm.getJsonString('part').getString()
-                partsn   =  rdm.getJsonString('partsn').getString()
-                devdesc  = rdm.getJsonString('devdesc').getString()
-                serialnb = rdm.getJsonString('serialnb').getString()
-                scsiid   = rdm.getJsonString('scsiid').getString()
-                fqdn     = rdm.getJsonString('fqdn').getString()
-                part = padDiskNumber(part)
-                if not part:
-                  if not device in devicesWithBadDiskNames:
-                    devicesWithBadDiskNames.append(device)
-                else:
-                  disk = {'part': part, 'partsn': partsn, 'dtype': 'RDM', 'scsiid': scsiid}
-                  if device in vdisksByVM:
-                    vdisksByVM[device]['disks'][part] = disk
-                  else:
-                    vdisksByVM[device] = {'devdesc': devdesc, 'serialnb': serialnb, 'fqdn': fqdn, 'disks': {part: disk}}
-              # remove devices with bad disk names
-              for device in devicesWithBadDiskNames:
-                log.debug('Removing ' + device + ' from list due to bad disk name')
-                del vdisksByVM[device]
-              log.debug('len(vdisksByVM):' + str(len(vdisksByVM)))
-
-              # for each VM with an RDM, add the other non-RDM disks
-              for device in vdisksByVM:
-                # query all non-RDM virtual disks on the VM
-                filter='filter=devtype=%27VirtualMachine%27%26parttype=%27Virtual%20Disk%27%26device=%27' + device + '%27%26%21dtype=%27RDM%27'
-                fields='fields=part,scsiid,dtype'
-                vdiskOutput = getPropertiesValues(filter, fields)
-                if vdiskOutput:
-                  vdisks = getParsedJsonArray(vdiskOutput)
-                  for vdisk in vdisks:
-                    part = vdisk.getJsonString('part').getString()
-                    scsiid = vdisk.getJsonString('scsiid').getString()
-                    dtype = vdisk.getJsonString('dtype').getString()
-                    part = padDiskNumber(part)
-                    disk = {'part': part, 'scsiid': scsiid, 'dtype': dtype}
-                    vdisksByVM[device]['disks'][part] = disk # add non-RDM disk to list
-              log.debug('len(vdisksByVM):' + str(len(vdisksByVM)))
-              
-              for device in vdisksByVM:
-                vm = vdisksByVM[device]
-                devdesc = vm['devdesc']
-                serialnb = vm['serialnb']
-                fqdn = vm['fqdn']
-                disks = vm['disks']
-                if 'Linux' in devdesc:
-                  base = 'sd' # first part of scsi name
-                  char = 'a'  # last part of scsi name
-                  for dnbr in sorted(disks.keys()):
-                    disk = disks[dnbr]
-                    scsiid = disk['scsiid']
-                    #log.debug('Setting disk name to ' + base + char)
-                    name = base + char
-                    if char == 'z':
-                      # this will handle 26*3 disks per VM properly
-                      if len(base) == 2:
-                        base = 'sda'
-                      else:
-                        base = 'sd' + chr(ord(base[-1])+1)
-                      char = 'a'
-                    else:
-                      char = chr(ord(char)+1)
-                    if not disk['dtype'] == 'RDM':
-                      del disks[dnbr] # remove non RDM disks after naming
-                    else:
-                      # cache info to build out disk/relationship by VPlex UUID
-                      rdmByLun[disk['partsn']] = {'name': name, 'scsiid': scsiid, 'device': device, 'serialnb': serialnb, 'fqdn': fqdn, 'devdesc': devdesc}
-                elif 'Windows' in devdesc:
-                  base = 'Disk ' # first part of scsi name
-                  nbr = 0 # in TADDM disk label starts with 0
-                  for dnbr in sorted(disks.keys()):
-                    disk = disks[dnbr]
-                    scsiid = disk['scsiid']
-                    #log.debug('Setting disk name to ' + base + str(nbr))
-                    name = base + str(nbr)
-                    nbr = nbr + 1
-                    if not disk['dtype'] == 'RDM':
-                      del disks[dnbr] # remove non RDM disks after naming
-                    else:
-                      # cache info to build out disk/relationship by VPlex UUID
-                      rdmByLun[disk['partsn']] = {'name': name, 'scsiid': scsiid, 'device': device, 'serialnb': serialnb, 'fqdn': fqdn, 'devdesc': devdesc}
-                else:
-                  log.debug('ERROR Unknown VM type')
-            
             vplexPortWWN = [] # collect VPlex ports WWN to connect to switch ports later
-            rdmByLunUsed = []
             hostPathsByLunUsed = []
             hostDisksByLunUsed = []
             global usesRelnAdded
@@ -649,7 +566,9 @@ try:
                   if partsn in hostPathsByLun:
                     hostPathsByLunUsed.append(partsn) # keep track of used to find gaps in code
                     hostPathArray = hostPathsByLun[partsn]
+                    log.debug('Found host path(s) for ' + partsn)
                     for hostPath in hostPathArray:
+                      log.debug('Adding host path for ' + hostPath['pathname'] + ' ' + hostPath['inwwn'] + ' ' + hostPath['tgtwwn'])
                       sPath = sensorhelper.newModelObject('cdm:dev.SCSIPath')
                       sPath.setArrayVolume(vsv)
                       # b/c we don't have LUN for virtual volume, TADDM topo agent 
@@ -660,8 +579,10 @@ try:
                       sPath.setDescription('pathname=' + str(hostPath['pathname']))
                       
                       targetPE = sensorhelper.newModelObject('cdm:dev.SCSIProtocolEndPoint')
-                      targetPE.setName(WorldWideNameUtils.toUniformString(partsn))
-                      targetPE.setWorldWideName(WorldWideNameUtils.toUniformString(partsn))
+                      #targetPE.setName(WorldWideNameUtils.toUniformString(partsn))
+                      #targetPE.setWorldWideName(WorldWideNameUtils.toUniformString(partsn))
+                      targetPE.setName(WorldWideNameUtils.toUniformString(hostPath['tgtwwn']))
+                      targetPE.setWorldWideName(WorldWideNameUtils.toUniformString(hostPath['tgtwwn']))
                       #log.debug('Adding parent endpoint: ' + str(targetPE))
                       sPath.setParent(targetPE)
                       
@@ -675,9 +596,9 @@ try:
                   
                   # Windows disks
                   if partsn in hostDisksByLun:
+                    #log.debug('Found host disk(s) for ' + partsn)
                     hostDisksByLunUsed.append(partsn)
                     hostDiskArray = hostDisksByLun[partsn]
-                    paths = []
                     for hostDisk in hostDiskArray:
                       sPath = sensorhelper.newModelObject('cdm:dev.SCSIPath')
                       sPath.setArrayVolume(vsv)
@@ -688,6 +609,7 @@ try:
                       # processing to set LUN on SCSIPath (via setLuns.py)
                       sPath.setDescription('part=' + str(hostDisk['part']))
                       
+                      # TODO set this to the VPlex port WWN (will need to cache before starting this vvol loop)
                       targetPE = sensorhelper.newModelObject('cdm:dev.SCSIProtocolEndPoint')
                       targetPE.setName(WorldWideNameUtils.toUniformString(partsn))
                       targetPE.setWorldWideName(WorldWideNameUtils.toUniformString(partsn))
@@ -707,73 +629,6 @@ try:
 
                   members.append(vsv)
                   
-                  # RDM disks
-                  if partsn in rdmByLun:
-                    diskinfo = rdmByLun[partsn]
-                    rdmByLunUsed.append(partsn) # keep track of the ones used
-                    if 'Linux' in diskinfo['devdesc']:
-                      parent = sensorhelper.newModelObject('cdm:sys.linux.LinuxUnitaryComputerSystem')
-                    elif 'Windows' in diskinfo['devdesc']:
-                      parent = sensorhelper.newModelObject('cdm:sys.windows.WindowsComputerSystem')
-                    parent.setName(diskinfo['device'])
-                    serialnb = diskinfo['serialnb']
-                    # format to match VMware
-                    serialnb = serialnb.replace('-','')
-                    serialbeg = serialnb[:16].lower()
-                    serialend = serialnb[-16:].lower()
-                    serialbeg = ' '.join(serialbeg[i:i+2] for i in range(0, len(serialbeg), 2))
-                    serialend = ' '.join(serialend[i:i+2] for i in range(0, len(serialend), 2))
-                    serialnb = 'VMware-' + serialbeg + '-' + serialend
-                    parent.setSerialNumber(serialnb)
-                    parent.setFqdn(diskinfo['fqdn'])
-                    parent.setManufacturer('VMware, Inc.')
-                    parent.setModel('VMware Virtual Platform')
-                    parent.setVirtual(True)
-                    scsiVol = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
-                    scsiVol.setName(diskinfo['name'])
-                    scsiVol.setDescription(diskinfo['scsiid'])
-                    scsiVol.setParent(parent)
-                    # use MSN for scsiVol to allow vsv.setRealizedBy(realizes) below (a hack)
-                    scsiVol.setManagedSystemName(serialnb + ':' + diskinfo['name'])
-                    
-                    # create skinny volume for storage performance
-                    vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-                    vsv.setManagedSystemName(partsn)
-
-                    # create relationships
-                    # the HostStorageSensor also creates a basedOnExtent to local disk partition, they merge properly
-                    bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
-                    bo.setSource(scsiVol)
-                    bo.setTarget(vsv)
-                    bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
-                    scsiVol.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
-                    # log.debug('Defined SCSIVolume: ' + str(scsiVol) + ' parent: ' + str(parent) + ' basedOn: ' + str(bo))
-                    storeResult(scsiVol, 'RDM')
-                    
-                    realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-                    realizes.setSource(vsv)
-                    realizes.setTarget(scsiVol)
-                    realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-                    vsv.setRealizedBy(realizes) # this causes StorageError without MSN set on scsiVol
-                    
-                    if not parent.getSerialNumber() in usesRelnAdded:
-                      # uses relationship has not yet been added for this VM
-
-                      # create skinny StorageSubSystem
-                      ssss = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-                      ssss.setOpenId(OpenId(ssss).addId('vplexserial', sss.getSerialNumber()))
-                      
-                      # create uses relation
-                      uses = sensorhelper.newModelObject('cdm:relation.Uses')
-                      uses.setSource(parent)
-                      uses.setTarget(ssss)
-                      uses.setType('com.collation.platform.model.topology.relation.Uses')
-                      storeResult(uses, 'RDM')
-                      
-                      #log.debug('Added Uses relationship for ' + parent.getSerialNumber() + ' and ' + sss.getSerialNumber())
-                      
-                      usesRelnAdded.append(parent.getSerialNumber())
-                      
               # now get vvolumes where partsn is empty
               fields='fields=device,vvol,psvclvl'
               filter = ('filter=parttype%3D%27VirtualVolume%27%26devtype%3D%27VirtualStorage%27'+
@@ -805,12 +660,6 @@ try:
               
               storeResult(sss, 'VPlex')
               discovered = True
-            
-            # print all rdmByLun not used
-            log.debug('RDMs not used:')
-            for partsn in rdmByLun:
-              if not partsn in rdmByLunUsed:
-                log.debug(partsn + ': ' + str(rdmByLun[partsn]))
             
             # print all hostPathsByLun not used
             log.debug('Host paths not used:')
@@ -1163,6 +1012,7 @@ try:
               # query switch ports
 
           # Build Solaris physical hosts because HBA discovery not working
+          # THIS IS NOT COMPLETE AND DOESN'T STORE ANY RESULTS
           filter='filter=devtype%3D%27Host%27%26osfamily%3D%27Solaris%27'
           fields='fields=device,hostname,fqdn'
           solarisOutput = getPropertiesValues(filter, fields)
