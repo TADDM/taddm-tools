@@ -72,13 +72,6 @@ import jarray
 import sensorhelper
 import time
 
-########################################################
-# Some default GLOBAL Values (Typically these should be in ALL CAPS)
-# Jython does not have booleans
-########################################################
-True = 1
-False = 0
-
 ########################
 # LogError      Error logger
 ########################
@@ -128,6 +121,7 @@ def tag_server(server):
         # if we get a result, set OpenID
         if tag:
             LogDebug('Setting OpenID using ' + tag.strip() + ' and ' + server.getName())
+            # feeding in server to OpenId() will set name attribute from server name
             server.setOpenId(OpenId(server).addId('tag', tag.strip()).addId('name', None))
         else:
             # use try/except here because if .discoverytag doesn't exist an error is thrown
@@ -144,6 +138,7 @@ def tag_server(server):
             # put new calculated value back out on the server
             sensorhelper.executeCommand(cmd)
             LogDebug('setting OpenID using ' + tag.strip() + ' and ' + server.getName())
+            # feeding in server to OpenId() will set name attribute from server name
             server.setOpenId(OpenId(server).addId('tag', tag).addId('name', None))
         except:
             LogError("Error occurred writing to .discoverytag, duplicate reducer discovery extension failed")
@@ -157,8 +152,8 @@ def tag_server(server):
 LogInfo('Duplicate Reducer 2.0 discovery extension started')
 
 try:
-    # check if target is not marked as virtual and model starts with 'VMware'
-    if not (server.hasVirtual() and server.getVirtual()) and server.hasModel() and server.getModel().startswith('VMware'):
+    # check if target is not marked as virtual and model contains 'virtual'
+    if not (server.hasVirtual() and server.getVirtual()) and server.hasModel() and 'virtual' in server.getModel().lower():
         LogDebug("Setting virtual to true")
         server.setVirtual(True)
 
