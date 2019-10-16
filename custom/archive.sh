@@ -94,6 +94,10 @@ do
     fi
 
     awk '/^Aged / {print " Found "$3}' $ARCHIVEDIR/$mydate/${i}.txt | tee -a $SCRIPTPATH/archive_${mydate}.out
+    skipped=`grep -c "Skipping for failed discovery" $ARCHIVEDIR/$mydate/${i}.txt`
+    if [ $skipped -gt 0 ]; then
+        echo " Skipped $skipped" | tee -a $SCRIPTPATH/archive_${mydate}.out
+    fi
  
     cd - >/dev/null
 done
