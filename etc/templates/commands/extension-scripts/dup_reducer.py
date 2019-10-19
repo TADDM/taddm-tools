@@ -129,7 +129,17 @@ def tag_server(server):
     except:
         LogInfo(tagfile + ' is not present or empty')
         # use current time stamp (in millis) with the DiscoverWorker thread number appended to ensure uniqueness
-        tag = str(System.currentTimeMillis()) + '-' + Thread.currentThread().getName().split('-')[1]
+        thread_name = Thread.currentThread().getName()
+        if '-' in thread_name:
+          thread_name = thread_name.split('-')[1]
+        elif 'Thread:' in thread_name:
+          thread_name = thread_name.split()[-1]
+        elif thread_name == 'MainThread':
+          thread_name = '0'
+        else:
+          LogInfo('Thread name format unexpected: ' + thread_name)
+          raise Exception()
+        tag = str(System.currentTimeMillis()) + '-' + thread_name
         LogDebug('setting ' + tagfile + ' to ' + tag)
         try:
             cmd = 'echo ' + tag + ' > /tmp/' + tagfile
@@ -167,7 +177,8 @@ try:
         if server.hasVirtual() and server.getVirtual():
             tag_server(server)
         elif server.hasManufacturer() and server.hasModel() and not server.hasSerialNumber():
-            LogDebug('Physical server is missing serial number')
+            LogDebug('Physical server is missing serial number, tagging server')
+            tag_server(server)
         else:
             LogDebug('Server is not virtual, skipping tag file')
     else:
