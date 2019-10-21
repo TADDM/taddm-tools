@@ -27,6 +27,7 @@ import java
 # Additional from Java imports
 ########################################################
 from java.lang import System
+from decimal import Decimal
 
 ########################################################
 # Set the Path information
@@ -177,7 +178,7 @@ try:
         xa['sudo_hba'] = 'invalid'
       log.info('sudo hba (collectionengine) is ' + str(xa['sudo_hba']))
 
-    # check for dmidecode on Linux
+    # check for Linux specific
     if "Linux" == os_type:
       if validateSudo('dmidecode'):
         xa['sudo_dmidecode'] = 'valid'
@@ -201,8 +202,21 @@ try:
             xa['sudo_rdm'] = 'valid'
           else:
             log.info('sg_inq for RDM.py discovery extension not found in sudo')
-            xa['sudo_rdm'] = 'invalid'
-          log.info('sudo sg_inq is ' + str(xa['sudo_rdm']))
+            # get lsscsi version, 0.26 or higher will work for RDM.py
+            lsscsi_ver = sensorhelper.executeCommand('lsscsi -V 2>&1')
+            if lsscsi_ver:
+              version = Decimal(lsscsi_ver.split()[1])
+              log.info('Found lsscsi version ' + str(version))
+              if version > Decimal('0.25'):
+                log.info('lsscsi version is equal or greater than 0.26, valid')
+                xa['sudo_rdm'] = 'valid'
+              else:
+                log.info('lsscsi version is less than 0.26, invalid')
+                xa['sudo_rdm'] = 'invalid'
+            else:
+              log.info('No output for lsscsi version command')
+              xa['sudo_rdm'] = 'invalid'
+          log.info('sudo rdm (sg_inq/lsscsi) is ' + str(xa['sudo_rdm']))
         else:
           log.info('lsscsi output does not contain RDM')
               
