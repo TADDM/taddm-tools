@@ -241,7 +241,10 @@ try:
           uses.setSource(cs)
           uses.setTarget(vplex)
           uses.setType('com.collation.platform.model.topology.relation.Uses')
-          result.addExtendedResult(uses)
+          # DANGER! By updating the vplex and not updating all the virtual volume members on the vplex, you
+          # open up the possibility of the StorageExtentCleanupAgent deleting a bunch of virtual volumes.
+          # Do not store the VPLEX
+          #result.addExtendedResult(uses)
             
       except:
         LogError("Command execution failed")
