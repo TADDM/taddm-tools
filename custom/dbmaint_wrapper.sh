@@ -80,5 +80,5 @@ $SCRIPTPATH/start_taddm.sh
 # send e-mail notification that maintenance was complete
 if [ "$EMAIL" != "" ]; then
     echo "`date` Sending email"
-    echo -e "Output of database maintenance job attached.\n\n-TADDM Discovery" | mailx -s "Database Maintenance Complete in environment $TADENV" -a $SCRIPTPATH/dbmaint.out $EMAIL 2>/dev/null
+    echo -e "Output of database maintenance job attached.\n\n-TADDM Discovery" | mailx -s "Database Maintenance Complete in environment $TADENV" -r "TADDM <${USER}@${HOSTNAME}>" -a $SCRIPTPATH/dbmaint.out $EMAIL 2>/dev/null
 fi

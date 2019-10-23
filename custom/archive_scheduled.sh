@@ -54,7 +54,7 @@ echo | tee -a archive_${mydate}.txt
 
 if [ -n "$emailAddress" ]
 then
-    echo -e "Check attached output for components scheduled for deletion.\n\n-TADDM Discovery" | mailx -s 'Scheduled for deletion' -a archive_${mydate}.txt $emailAddress 2>/dev/null
+    echo -e "Check attached output for components scheduled for deletion.\n\n-TADDM Discovery" | mailx -s 'Scheduled for deletion' -r "TADDM <${USER}@${HOSTNAME}>" -a archive_${mydate}.txt $emailAddress 2>/dev/null
 fi
 
 rm archive_${mydate}.txt

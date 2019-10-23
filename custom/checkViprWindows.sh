@@ -14,4 +14,4 @@ COMMONPART="$BINDIR/common.sh"
 # comma separated list of email addresses
 EMAIL=
 
-./checkViprWindows.py | mailx -s "Results from ViPR physical Windows hosts" -r "TADDM PROD <cmdbusr1@taddm>" $EMAIL 2>/dev/null
+./checkViprWindows.py | mailx -s "Results from ViPR physical Windows hosts" -r "TADDM <${USER}@${HOSTNAME}>" $EMAIL 2>/dev/null

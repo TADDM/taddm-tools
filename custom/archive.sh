@@ -112,7 +112,7 @@ fi
 
 if [ -n "$emailAddress" ]
 then
-    echo -e "Output of archive job attached.\n\n-TADDM Discovery" | mailx -s 'Archive Complete' -a $SCRIPTPATH/archive_${mydate}.out $emailAddress 2>/dev/null
+    echo -e "Output of archive job attached.\n\n-TADDM Discovery" | mailx -s 'Archive Complete' -r "TADDM <${USER}@${HOSTNAME}>" -a $SCRIPTPATH/archive_${mydate}.out $emailAddress 2>/dev/null
 fi
 
 rm $SCRIPTPATH/archive_${mydate}.out
