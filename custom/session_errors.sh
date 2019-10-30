@@ -1,6 +1,6 @@
 #!/bin/sh
 
-#set -x
+set -x
 
 # get path of script
 SCRIPT=$(readlink -f "$0")
@@ -16,10 +16,24 @@ COMMONPART="$BINDIR/common.sh"
 USER=administrator
 PASSWORD=collation
 
-rm scopes/session_errors*.scope
+rm scopes/session_errors*.scope 2>/dev/null
 SQL="$COLLATION_HOME/custom/sql/session_errors.sql"
-for ip in $(cd $BINDIR; ./dbquery.sh -q -c -u "$USER" -p "$PASSWORD" "`cat $SQL`" | grep -v "IP")
+(cd $BINDIR; ./dbquery.sh -q -c -u "$USER" -p "$PASSWORD" "`cat $SQL`" | grep -v "IP,SENSOR") | while read row
 do
+  ip=`echo $row | awk -F, '{print $1}'`
+  method="ssh"
+  while read ports
+  do 
+    for port in `echo "${ports//,}"`
+    do 
+      if [ "$port" -eq "135" ]
+      then
+        # if port 135 is found then it is WMI login
+        method="wmi"
+        break
+      fi
+    done
+  done <<< $(echo $row | cut -d "[" -f2 | cut -d "]" -f1)
   scope=`grep -l "$ip," scopes/B_*.scope | grep -E 'B_[a-zA-Z0-9]+_(UNIX|Win|ESXi)_[0-9]+.scope'`
   if [ ! -z "$scope" ]; then
     org=`grep "$ip," $scope | awk -F, '{print $3}' | awk -F\> '{print $3}'`
@@ -27,7 +41,7 @@ do
       org="UNKNOWN"
     fi
     desc=`grep "$ip," $scope | awk -F, '{print $3}'`
-    echo "$ip,,$desc" >> scopes/session_errors_${org}.scope
+    echo "$ip,,$desc ($method)" >> scopes/session_errors_${org}.scope
   fi
   #grep "$ip," scopes/${scope}_invalid.scope >> scopes/${scope}_invalid_${org}.scope
 done
