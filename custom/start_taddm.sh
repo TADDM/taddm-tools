@@ -14,11 +14,15 @@ BINDIR=$COLLATION_HOME/bin
 COMMONPART="$BINDIR/common.sh"
 . $COMMONPART
 
-echo "Starting PSS"
-# STARTING LOCAL PRIMARY STORAGE SERVER
-$COLLATION_HOME/bin/control start
+tstatus=`$COLLATION_HOME/bin/control status | awk -F": " '/TADDM/ {print $2}'`
+if [ "$tstatus" != "Running" ]
+then
+    echo "Starting PSS"
+    # STARTING LOCAL PRIMARY STORAGE SERVER
+    $COLLATION_HOME/bin/control start
 
-sleep 60
+    sleep 60
+fi
 
 # Wait for PSS to start before continuing
 echo "Checking server status."
@@ -53,3 +57,4 @@ do
   ssh -q -oStrictHostKeyChecking=no $server $COLLATION_HOME/bin/control start
   sleep 5
 done
+
