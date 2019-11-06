@@ -33,8 +33,10 @@ do
       org=`grep "$ip," scopes/B_*.scope | grep -v "rescan" | awk -F, '{print $3}' | awk -F\> '{print $3}'`
       if [ -z "$org" ]; then
         echo "$ip not found in any organization"
+        grep "$ip," scopes/${scope}_invalid.scope >> scopes/${scope}_invalid_UNKNOWN.scope
+      else
+        grep "$ip," scopes/${scope}_invalid.scope >> scopes/${scope}_invalid_${org}.scope
       fi
-      grep "$ip," scopes/${scope}_invalid.scope >> scopes/${scope}_invalid_${org}.scope
     done
   fi
 done
