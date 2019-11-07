@@ -1,0 +1,151 @@
+TADDM Enhanced CPU Discovery v1.2 : Release Notes
+
+--------------------------------------------------------------------------------
+ Product Release Information
+--------------------------------------------------------------------------------
+       
+       Product: TADDM Enhanced CPU Discovery
+Release Number: 1.2
+  Release Date: June, 2013
+
+--------------------------------------------------------------------------------
+ Overview
+--------------------------------------------------------------------------------
+
+This Jython script discovers enhanced CPU detail for Windows Server, Linux, and HP-UX targets. As of this 
+publish date, TADDM does not discover all CPU detail on these systems. For Windows only Server 2003 and 
+2008 are handled by this script. For Windows 2003 core discovery, a Hotfix is required to be 
+installed on the target (KB932370). The discovery will result in a warning if it is attempted to
+run and that Hotfix is not applied.
+
+No official support. Support is provided on a best-effort basis when problems are discovered.
+
+--------------------------------------------------------------------------------
+ Installation Notes
+--------------------------------------------------------------------------------
+
+ System Requirements
+ 	- TADDM v7.2.1.4+, v7.2.2+, v7.3+
+ 	- For Windows Server 2003 targets, Hotfix KB932370 applied
+    - For Linux targets, dmidecode command works or read access to /proc/cpuinfo
+    
+ Installation
+	1) Copy EnhancedCPUDiscovery.py to etc/templates/commands/extension-scripts directory under 
+	   <taddm_install>
+	2) Add the following line to both LinuxComputerSystemTemplate and WindowsComputerSystemTemplate
+       under <taddm_install>/etc/templates/commands
+    
+       SCRIPT:etc/templates/commands/extension-scripts/EnhancedCPUDiscovery.py
+
+    3) Start the Discovery Management Console and click on Computer Systems. If either 
+       LinuxComputerSystemTemplate, WindowsComputerSystemTemplate, or HpUxComputerSystemTemplate is 
+       disabled, then enable them.
+	4) NO need to restart TADDM.
+    
+ Installation - Details Panel
+    Note: The installation above will begin the population of CPU cores in the ComputerSystem CIs,
+    but the details panels in the Data Management Portal (DMP) do not expose these attributes by 
+    default. If you want to see these attributes in the DMP, then follow these instructions.
+
+    1) Edit etc/detail/attributenames.xml and for Windows, after the following line
+    
+       <attribute className="com.collation.platform.model.topology.sys.windows.WindowsComputerSystem" displayName="Number of Logical CPUs" name="numCPUs"/>
+
+       add this line
+       
+       <attribute className="com.collation.platform.model.topology.sys.windows.WindowsComputerSystem" displayName="Total number of Cores" name="CPUCoresInstalled"/>
+       
+       For Linux, after the following line
+       
+       <attribute className="com.collation.platform.model.topology.sys.linux.LinuxUnitaryComputerSystem" displayName="Number of Logical CPUs" name="numCPUs"/>
+
+       add this line
+       
+       <attribute className="com.collation.platform.model.topology.sys.linux.LinuxUnitaryComputerSystem" displayName="Total number of Cores" name="CPUCoresInstalled"/>
+       
+       Similiar changes need made for HP-UX.
+       
+    2) Edit etc/detail/screencontent.xml and for Windows, find the following section
+    
+        <tableContent className="com.collation.platform.model.topology.sys.windows.WindowsComputerSystem" name="WindowsComputerSystem.General">
+            <field>
+                <plain fieldName="name"/>
+                <plain fieldName="fqdn"/>
+                <plain displayName="Object Type" displayType="type" fieldName="objectType"/>
+                <plain displayType="date" fieldName="lastModifiedTime"/>
+                <plain fieldName="manufacturer"/>
+                <plain fieldName="model"/>
+                <plain fieldName="serialNumber"/>
+                <plain fieldName="architecture"/>
+                <plain displayType="speed" fieldName="CPUSpeed"/>
+                <plain fieldName="CPUType"/>
+                <plain fieldName="numCPUs"/>
+                <plain fieldName="CPUCoresInstalled"/>
+                <plain displayType="memory" fieldName="memorySize"/>
+                <plain fieldName="faultTolerance"/>
+            </field>
+
+       add the following line as shown in the section above
+       
+       <plain fieldName="CPUCoresInstalled"/>
+       
+       For Linux, find the following section
+
+        <tableContent className="com.collation.platform.model.topology.sys.linux.LinuxUnitaryComputerSystem" name="LinuxUnitaryComputerSystem.General">
+            <field>
+                <plain fieldName="name"/>
+                <plain fieldName="fqdn"/>
+                <plain displayType="date" fieldName="lastModifiedTime"/>
+            </field>
+            <field>
+                <plain displayName="Object Type" displayType="type" fieldName="objectType"/>
+            </field>
+            <field>
+                <plain fieldName="manufacturer"/>
+            </field>
+            <field>
+                <plain fieldName="model"/>
+            </field>
+            <field>
+                <plain fieldName="serialNumber"/>
+            </field>
+            <field>
+                <plain fieldName="architecture"/>
+            </field>
+            <field>
+                <plain displayType="speed" fieldName="CPUSpeed"/>
+            </field>
+            <field>
+                <plain fieldName="CPUType"/>
+            </field>
+            <field>
+                <plain fieldName="numCPUs"/>
+            </field>
+            <field>
+                <plain fieldName="CPUCoresInstalled"/>
+            </field>
+       
+       add the following lines as shown in the section above
+    
+        <field>
+            <plain fieldName="CPUCoresInstalled"/>
+        </field>
+    
+       Similar changes need made for HP-UX.
+
+ Manifest
+ 	This release consists of the following items:
+ 		- Release notes (this file)
+ 		- Enhanced CPU Discovery python script (EnhancedCPUDiscovery.py)
+
+--------------------------------------------------------------------------------
+ Known Problems and Workarounds
+--------------------------------------------------------------------------------
+
+ None
+
+--------------------------------------------------------------------------------
+ Troubleshooting
+--------------------------------------------------------------------------------
+    
+ None
