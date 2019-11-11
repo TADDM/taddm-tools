@@ -112,6 +112,8 @@ def tag_server(server):
     LogDebug("Using tag file name " + tagfile)
 
     try:
+        # /tmp is the 'safest' place to keep it, however /tmp can be cleared out
+        # when a VM is copied which might defeat the purpose
         cmd = 'cat /tmp/' + tagfile
         # different command/location for Windows
         if sensorhelper.targetIsWindows():
