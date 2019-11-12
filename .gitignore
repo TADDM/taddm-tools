@@ -6,6 +6,7 @@
 !custom
 !etc
 !osgi
+!support
 
 # files
 **.log

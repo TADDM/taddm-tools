@@ -1,0 +1,279 @@
+#!/usr/bin/env ../../bin/jython_coll
+
+############### Begin Standard Header - Do not add comments here ###############
+# 
+# File:     %W%
+# Version:  %I%
+# Modified: %G% %U%
+# Build:    %R% %L%
+# 
+# Licensed Materials - Property of IBM
+# 
+# Restricted Materials of IBM
+# 
+# 5724-N55
+# 
+# (C) COPYRIGHT IBM CORP. 2007.  All Rights Reserved.
+# 
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with IBM Corp.
+# 
+############################# End Standard Header ##############################
+
+'''
+Main comment block, Beginning of Script
+
+SCRIPT OVERVIEW 
+
+rhel_cluster_ext_attrs.jy - This script is used to create
+            extended attributes within TADDM for the RHEL 
+            cluster sensor.
+
+DESCRIPTION:
+
+
+CAVEATS:
+
+This script requires sensorhelper.py and ext_attr_helper.py.  The 
+former should be in TADDm 7.1.2+ and the latter should have been provided
+with this script.
+
+Author:  Mat Davis
+         mdavis5@us.ibm.com
+         IBM C&SI Lab Services
+
+History:  
+
+    Version 1.0  -- 4/7/14 -- Initial Version
+
+'''
+
+VERSION = "1.00"
+
+# Standard Jython/Python Library Imports
+
+import sys 
+import java
+
+
+# from Java [additional imports - not sure why]...
+
+from java.lang import System
+from java.lang import Class
+from java.util import Properties
+from java.io import FileInputStream
+from java.lang import String
+from java.lang import Boolean 
+from java.lang import Runtime 
+
+# Set the Path information
+
+coll_home = System.getProperty("com.collation.home")
+System.setProperty("jython.home",coll_home + "/external/jython-2.1")
+System.setProperty("python.home",coll_home + "/external/jython-2.1")
+
+# Setting some stuff to deal with windows
+System.setProperty("taddm.dbquery",coll_home + "/bin/dbquery.sh")
+System.setProperty("taddm.win.dbquery",coll_home + "/bin/dbquery.bat")
+System.setProperty("taddm.win.api",coll_home + "/sdk/bin/api.bat")
+System.setProperty("taddm.api",coll_home + "/sdk/bin/api.sh")
+
+
+jython_home = System.getProperty("jython.home")
+sys.path.append(jython_home + "/Lib")
+sys.path.append(coll_home + "/lib/sensor-tools")
+sys.prefix = jython_home + "/Lib"
+
+
+
+# Import the TADDM Java Libraries  [Following Required for api access]
+
+from com.collation.platform.util import Props
+from com.collation.proxy.api.client import *
+from com.ibm.cdb.api import ApiFactory
+from com.collation.platform.util import ModelFactory
+from com.collation.platform.model.topology.meta import UserDataAttributeMeta
+from com.collation.platform.model.topology.meta import UserDataMeta
+# for authentication at the API level
+from com.collation.platform.security.auth import *
+from com.collation.platform.logger import LogFactory
+
+
+# More Standard Jython/Python Library Imports
+
+import traceback
+import string
+import re
+import jarray
+import os
+import getopt
+import pprint
+
+import org.xml.sax as sax
+import org.apache.xerces.parsers.DOMParser as domparser
+
+from java.io import StringReader
+
+# Custom Libraries to import (Need to be in the path)
+import sensorhelper
+import ext_attr_helper as ea
+
+False = Boolean(0)
+True = Boolean(1)
+
+#  We don't want any logging (or anything to show up on the screen right now...
+
+System.setProperty("com.collation.LogFile","rhel_cluster_ext_attrs.log")
+
+global log
+
+log = LogFactory.getLogger("rhel_cluster_ext_attrs")
+
+if re.match("Windows",System.getProperty("os.name")):
+    taddm_api = System.getProperty("taddm.win.api")
+    dbquery = System.getProperty("taddm.win.dbquery")
+else:
+    taddm_api = System.getProperty("taddm.api")
+    dbquery = System.getProperty("taddm.dbquery")
+
+def usage():
+    print """ \
+usage: rhel_cluster_ext_attrs.jy [options]
+
+    Options:
+    -u userid       User required to login to TADDM Server
+                    Defaults to 'administrator'
+
+    -p password     Password for TADDM Server user
+                    Defaults to 'collation'
+
+    -h              print this message
+
+"""
+
+########################
+# LogError      Error logger
+########################
+def LogError(msg):
+        log.error(msg)
+        (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+        traceback.print_exc(ErrorTB)
+
+########################
+# LogInfo
+########################
+def LogInfo(msg):
+        log.info(msg)
+
+########################
+# LogDebug
+########################
+def LogDebug(msg):
+        log.debug(msg)
+#=====================================================================================
+#   MAIN 
+#=====================================================================================
+
+if __name__ == "__main__":
+
+#
+# Handle the options
+#
+    LogInfo("Using sensorhelper version: " + str(sensorhelper.getVersion()))
+    LogInfo("Using ext_attr_helper version: " + str(ea.getVersion()))
+
+    try:    
+        opts, args = getopt.getopt(sys.argv[1:], "u:p:h", ["help"])
+    except getopt.GetoptError, err:
+        # print help information and exit:
+        print str(err) # will print something like "option -a not recognized"
+        usage()
+        sys.exit(2)
+    userid = None
+    password = None
+    for o, a in opts:
+        if o == "-u":
+            userid = a
+        elif o == "-p":
+            password = a
+        elif o in ("-h", "--help"):
+            usage() 
+            sys.exit()
+        else:   
+            assert False, "unhandled option"
+
+    host = "localhost"       # we default to localhost, it COULD be changed but this script will run ON the TADDM Server
+
+    if userid is None: 
+        userid = "administrator"
+
+    if password is None: 
+        password = "collation"
+
+    res = CommandLineAuthManager.authorize(userid, password)
+    if res == 0 :
+            print "Authentication Failed!!!"
+            java.lang.System.exit(8);
+    else:
+            print "Authentication successful"
+
+    # Now have a dictionary of Action objects...
+    print "**** Creating the extended attributes ****"
+
+    api = ea.get_taddm_api(host,userid,password)
+
+    attrs = [
+        'CMAN_QUORUM_TIMEOUT',
+        'cman_expected_votes',
+        'cman_quorum_dev_poll',
+        'dev_loss_tmo',
+        'failoverdomain_name',
+        'failoverdomain_nofailback',
+        'failoverdomain_ordered',
+        'failoverdomain_restricted',
+        'fence_daemon_clean_start',
+        'fence_daemon_post_fail_delay',
+        'fence_daemon_post_join_delay',
+        'fencedevice_agent',
+        'fencedevice_ipaddr',
+        'fencedevice_lanplus',
+        'fencedevice_login',
+        'fencedevice_name',
+        'heuristic_interval',
+        'heuristic_program',
+        'heuristic_score',
+        'heuristic_tko',
+        'logging_logfile',
+        'lpfc_devloss_tmo',
+        'qlport_down_retry',
+        'quorumd_device',
+        'quorumd_interval',
+        'quorumd_min_score',
+        'quorumd_tko',
+        'quorumd_votes',
+        'rm_log_facility',
+        'rm_log_level',
+        'rm_status_poll_interval',
+        'service_autostart',
+        'service_domain',
+        'service_exclusive',
+        'service_ip_monitor_link',
+        'service_ip_sleeptime',
+        'service_name',
+        'service_recovery',
+        'totem_consensus',
+        'totem_join',
+        'totem_token',
+        'totem_token_retransmits_before_loss_const']
+
+    for attr in attrs:
+        print "####### Creating attribute " + str(attr)
+        try:
+            ea.createExtendedAttributes(api, str(attr), 'String', 'com.collation.platform.model.topology.sys.ComputerSystemCluster')
+        except:
+            print "--> Failed, exists?"
+            continue
+        print "--> Successful"
+
+    sys.exit(0) 
+
