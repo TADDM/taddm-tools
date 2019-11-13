@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CTSTemplate>
+	<name>certificate</name>
+	<result-class>com.ibm.cdb.discover.sys.linux.result.LinuxUnitaryComputerSystemResult</result-class>
+    <plugin-id>com.ibm.cdb.discover.sensor.sys.linuxcomputersystem_7.2.2</plugin-id>
+	<engine-id>com.ibm.cdb.core.jython253_2.5.3</engine-id>
+	<matcher-script>matcher.py</matcher-script>
+	<sensor-script>sensor.py</sensor-script>
+</CTSTemplate>
