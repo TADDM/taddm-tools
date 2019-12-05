@@ -96,6 +96,8 @@ def buildAppServer(version, vendor, product, desc, sp, path, obj_type):
   procpool.setName('ProcessPool')
   procpool.setCmdLine(path)
   appserver.setProcessPools(sensorhelper.getArray([procpool,], 'cdm:app.ProcessPool'))
+  
+  return appserver
 
 ##########################################################
 # Main
