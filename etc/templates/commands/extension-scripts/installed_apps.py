@@ -60,7 +60,8 @@ import sensorhelper
 def LogError(msg):
   log.error(msg)
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
-  traceback.print_exc(ErrorTB)
+  errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
+  log.error(errMsg)
 
 def buildAppServer(version, vendor, product, desc, sp, path, obj_type):
   appserver = sensorhelper.newModelObject('cdm:app.AppServer')
@@ -88,7 +89,7 @@ def buildAppServer(version, vendor, product, desc, sp, path, obj_type):
   bindaddr.setPrimaryIpAddress(ipaddr)
   bindaddr.setIpAddress(ipaddr)
   appserver.setPrimarySAP(bindaddr)
-  appserver.setLabel(server.getFqdn() + ':' + path)
+  appserver.setLabel(computersystem.getFqdn() + ':' + path)
   # build process pool
   procpool = sensorhelper.newModelObject('cdm:app.ProcessPool')
   procpool.setParent(appserver)
@@ -108,17 +109,18 @@ try:
 
   # Java
   try:
-    version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
-    vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
-    product = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
-    desc    = sensorhelper.executeCommand('java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
-    sp      = sensorhelper.executeCommand('java -version 2>&1 | sed -n 4p').strip()
-    path    = sensorhelper.executeCommand('which java').strip()
+    version = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
+    vendor  = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
+    product = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
+    desc    = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
+    sp      = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | sed -n 4p').strip()
+    path    = sensorhelper.executeCommand('which /opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java').strip()
     
     appserver = buildAppServer(version, vendor, product, desc, sp, path, 'System Java')
     result.addExtendedResult(appserver)
     
   except:
+    LogError('Java failed')
     log.info('One of the java commands failed or java is not installed on path')
     pass
 
