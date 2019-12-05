@@ -62,28 +62,6 @@ def LogError(msg):
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
   traceback.print_exc(ErrorTB)
 
-sudo_list = None
-def validateSudo(cmd=None):
-  try:
-    if cmd:
-      global sudo_list
-      if sudo_list is None:
-        sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
-      # look for line containing (root) NOPASSWD: .*cmd.*
-      regex = re.compile('\(((root)|(ALL))\) NOPASSWD: .*' + cmd + '.*', re.MULTILINE | re.DOTALL)
-      if regex.search(sudo_list):
-        return True
-      else:
-        return False
-    else:
-      try:
-        sudo_list = sensorhelper.executeCommand('sudo -l 2>&1')
-        return True
-      except:
-        return False
-  except:
-    return False
-
 ##########################################################
 # Main
 # Setup the various objects required for the extension
@@ -96,14 +74,22 @@ try:
 
   # Java
   try:
-    java_version = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | grep \'^java version\' | awk \'{print $3}\'')
-    java_path = sensorhelper.executeCommand('which /opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java')
+    java_version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk \'"\' \'{print $2}\'')
+    java_vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'')
+    java_product = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | awk \'{print $1}\'')
+    java_desc    = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | cut -c 1-31')
+    java_sp      = sensorhelper.executeCommand('java -version 2>&1 | sed -n 4p')
+    java_path    = sensorhelper.executeCommand('which java')
     
     appserver = sensorhelper.newModelObject('cdm:app.AppServer')
     appserver.setKeyName('AppServer')
     appserver.setHost(computersystem)
     appserver.setObjectType('System Java')
-    appserver.setProductVersion(java_version.replace('"', '', 2))
+    appserver.setProductVersion(java_version.strip())
+    appserver.setVendorName(java_vendor.strip())
+    appserver.setProductName(java_product.strip())
+    appserver.setDescription(java_desc.strip())
+    appserver.setServicePack(java_sp.strip())
     # build bind address
     bindaddr = sensorhelper.newModelObject('cdm:net.CustomBindAddress')
     bindaddr.setPortNumber(0)
@@ -125,6 +111,7 @@ try:
     result.addExtendedResult(appserver)
     
   except:
+    log.info('One of the java commands failed or java is not installed on path')
     pass
     
   log.info("Installed applications discovery extension ended")
