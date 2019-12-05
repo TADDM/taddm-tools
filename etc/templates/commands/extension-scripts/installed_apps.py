@@ -109,12 +109,12 @@ try:
 
   # Java
   try:
-    version = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
-    vendor  = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
-    product = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
-    desc    = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
-    sp      = sensorhelper.executeCommand('/opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java -version 2>&1 | sed -n 4p').strip()
-    path    = sensorhelper.executeCommand('which /opt/IBM/taddm/dist/external/jdk-Linux-x86_64/bin/java').strip()
+    version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
+    vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
+    product = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
+    desc    = sensorhelper.executeCommand('java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
+    sp      = sensorhelper.executeCommand('java -version 2>&1 | sed -n 4p').strip()
+    path    = sensorhelper.executeCommand('which java').strip()
     
     appserver = buildAppServer(version, vendor, product, desc, sp, path, 'System Java')
     result.addExtendedResult(appserver)
