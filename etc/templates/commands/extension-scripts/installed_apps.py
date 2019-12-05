@@ -108,10 +108,10 @@ try:
 
   # Java
   try:
-    version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk \'"\' \'{print $2}\'').strip()
+    version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
     vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
     product = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
-    desc    = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | cut -c 1-31').strip()
+    desc    = sensorhelper.executeCommand('java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
     sp      = sensorhelper.executeCommand('java -version 2>&1 | sed -n 4p').strip()
     path    = sensorhelper.executeCommand('which java').strip()
     
@@ -127,7 +127,7 @@ try:
     version = sensorhelper.executeCommand('ant -version | cut -c 24-28').strip()
     path    = sensorhelper.executeCommand('which ant').strip()
     
-    appserver = appserver = buildAppServer(version, 'The Apache Group', 'Ant', None, None, path, 'Ant')
+    appserver = buildAppServer(version, 'The Apache Group', 'Ant', None, None, path, 'Ant')
     
     result.addExtendedResult(appserver)
     
