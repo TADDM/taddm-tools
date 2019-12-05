@@ -100,7 +100,7 @@ try:
     bindaddr.setPrimaryIpAddress(ipaddr)
     bindaddr.setIpAddress(ipaddr)
     appserver.setPrimarySAP(bindaddr)
-    #appserver.setLabel(server.getFqdn() + ':System Java')
+    appserver.setLabel(server.getFqdn() + ':' + java_path)
     # build process pool
     procpool = sensorhelper.newModelObject('cdm:app.ProcessPool')
     procpool.setParent(appserver)
@@ -112,6 +112,42 @@ try:
     
   except:
     log.info('One of the java commands failed or java is not installed on path')
+    pass
+
+  # Ant
+  try:
+    ant_version = sensorhelper.executeCommand('ant -version | cut -c 24-28')
+    ant_path    = sensorhelper.executeCommand('which ant')
+    
+    appserver = sensorhelper.newModelObject('cdm:app.AppServer')
+    appserver.setKeyName('AppServer')
+    appserver.setHost(computersystem)
+    appserver.setObjectType('Ant')
+    appserver.setProductVersion(ant_version.strip())
+    appserver.setVendorName('The Apache Group')
+    appserver.setProductName('Ant')
+    # build bind address
+    bindaddr = sensorhelper.newModelObject('cdm:net.CustomBindAddress')
+    bindaddr.setPortNumber(0)
+    bindaddr.setPath(ant_path)
+    # build IP for bind address
+    ipaddr = sensorhelper.newModelObject('cdm:net.IpV4Address')
+    ipaddr.setStringNotation(str(seed))
+    bindaddr.setPrimaryIpAddress(ipaddr)
+    bindaddr.setIpAddress(ipaddr)
+    appserver.setPrimarySAP(bindaddr)
+    appserver.setLabel(server.getFqdn() + ':' + ant_path)
+    # build process pool
+    procpool = sensorhelper.newModelObject('cdm:app.ProcessPool')
+    procpool.setParent(appserver)
+    procpool.setName('ProcessPool')
+    procpool.setCmdLine(ant_path)
+    appserver.setProcessPools(sensorhelper.getArray([procpool,], 'cdm:app.ProcessPool'))
+    
+    result.addExtendedResult(appserver)
+    
+  except:
+    log.info('One of the ant commands failed or ant is not installed on path')
     pass
     
   log.info("Installed applications discovery extension ended")
