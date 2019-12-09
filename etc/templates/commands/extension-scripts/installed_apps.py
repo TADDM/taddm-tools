@@ -146,8 +146,8 @@ try:
       vendor  = version_out.splitlines()[2].split()[0]
       product = second_line[0]
       desc    = ' '.join(second_line[:4])
-      # System Java on Windows does not print the 4th line that has the service pack
       #sp      = version_out.splitlines()[3]
+      # System Java on Windows does not print the 4th line that has the service pack
       sp      = None
       path    = sensorhelper.executeCommand('where java').strip()
     else:
@@ -177,6 +177,21 @@ try:
       result.addExtendedResult(appserver)
   except:
     log.info('One of the ant commands failed or ant is not installed on path')
+    pass
+    
+  # SAP BO client
+  try:
+    if "Windows" == os_type:
+      inventory_txt = sensorhelper.getFile('C:\\Program Files (x86)\\SAP BusinessObjects\\InstallData\\inventory.txt')
+      version = ' '.join(inventory_txt.getContent().split()[4:8])
+            
+      appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
+      
+      result.addExtendedResult(appserver)
+  except:
+    # TODO remove LogError
+    LogError('BO failed')
+    log.info('BO client not installed')
     pass
     
   log.info("Installed applications discovery extension ended")
