@@ -63,6 +63,11 @@ def LogError(msg):
   errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
   log.error(errMsg)
 
+def get_class_name(model_object):
+  cn = model_object.__class__.__name__
+  real_class_name=cn.replace("Impl","")
+  return real_class_name
+  
 # copied from ext_attr_helper because of CNF error while running on anchor
 def get_os_type(os_handle):
   '''
@@ -161,13 +166,13 @@ try:
 
   # Ant
   try:
-    version = sensorhelper.executeCommand('ant -version | cut -c 24-28').strip()
-    path    = sensorhelper.executeCommand('which ant').strip()
-    
-    appserver = buildAppServer(version, 'The Apache Group', 'Ant', None, None, path, 'Ant')
-    
-    result.addExtendedResult(appserver)
-    
+    if "Windows" != os_type:
+      version = sensorhelper.executeCommand('ant -version | cut -c 24-28').strip()
+      path    = sensorhelper.executeCommand('which ant').strip()
+      
+      appserver = buildAppServer(version, 'The Apache Group', 'Ant', None, None, path, 'Ant')
+      
+      result.addExtendedResult(appserver)
   except:
     log.info('One of the ant commands failed or ant is not installed on path')
     pass
