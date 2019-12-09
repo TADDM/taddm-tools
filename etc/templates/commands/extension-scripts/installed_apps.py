@@ -199,7 +199,7 @@ try:
   # DB2 client
   try:
     if "Windows" != os_type:
-      home_dir = sensorhelper.executeCommand('echo $HOME')
+      home_dir = sensorhelper.executeCommand('echo -n $HOME').strip()
       db2licm_txt = sensorhelper.getFile(home_dir + '/db2licm.txt')
       content = db2licm_txt.getContent()
       populated = False
@@ -210,12 +210,12 @@ try:
       # if db2licm file is empty, then there is a DB2 client installed
       if not populated:
         
-        path    = sensorhelper.executeCommand('ls /opt/ibm/db2/*/bin/db2'
+        path    = sensorhelper.executeCommand('ls /opt/ibm/db2/*/bin/db2')
         version = sensorhelper.executeCommand('/opt/ibm/db2/*/bin/db2level | grep \'^Informational tokens\' | awk -F\\" \'{print $2}\' | awk \'{print $2}\'')
             
-        appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, path, 'BusinessObjects Client')
+        appserver = buildAppServer(version, 'IBM', 'DB2 Client', None, None, path, 'DB2 Client')
       
-        #result.addExtendedResult(appserver)
+        result.addExtendedResult(appserver)
   except:
     # TODO remove LogError
     LogError('DB2 client failed')
