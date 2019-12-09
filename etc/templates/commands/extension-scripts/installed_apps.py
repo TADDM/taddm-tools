@@ -63,6 +63,26 @@ def LogError(msg):
   errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
   log.error(errMsg)
 
+# copied from ext_attr_helper because of CNF error while running on anchor
+def get_os_type(os_handle):
+  '''
+  Return OS we are on --> UNIX or WINDOWS
+  '''
+  cs = sensorhelper.getComputerSystem(os_handle)
+  class_name = get_class_name(cs)
+  #LogInfo("OS Classname is:  " + str(class_name))
+  if re.search("Linux",class_name,re.I):
+    os_type = "Linux"
+  elif re.search("Windows",class_name,re.I):
+    os_type = "Windows"
+  elif re.search("AIX",class_name,re.I):
+    os_type = "Aix"
+  elif re.search("Sun",class_name,re.I):
+    os_type = "Sun"
+  else:
+    os_type = "UNKNOWN"
+  return os_type
+  
 def buildAppServer(version, vendor, product, desc, sp, path, obj_type):
   appserver = sensorhelper.newModelObject('cdm:app.AppServer')
   appserver.setKeyName('AppServer')
@@ -109,14 +129,27 @@ try:
 
   log.info("Installed applications discovery extension started (written by Mat Davis - mdavis5@us.ibm.com)")
 
+  os_type = get_os_type(os_handle)
+  
   # Java
   try:
-    version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
-    vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
-    product = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
-    desc    = sensorhelper.executeCommand('java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
-    sp      = sensorhelper.executeCommand('java -version 2>&1 | sed -n 4p').strip()
-    path    = sensorhelper.executeCommand('which java').strip()
+    if "Windows" == os_type:
+      version_out = sensorhelper.executeCommand('java -version').strip()
+      second_line = version_out.splitlines()[1].split()
+      
+      version = version_out.splitlines()[0].split("\"")[1]
+      vendor  = version_out.splitlines()[2].split()[0]
+      product = second_line[0]
+      desc    = ' '.join(second_line[:4])
+      sp      = version_out.splitlines()[3]
+      path    = sensorhelper.executeCommand('where java').strip()
+    else:
+      version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
+      vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
+      product = sensorhelper.executeCommand('java -version 2>&1 | sed -n 2p | awk \'{print $1}\'').strip()
+      desc    = sensorhelper.executeCommand('java -version 2>&1  | sed -n 2p | awk \'{print $1,$2,$3,$4}\'').strip()
+      sp      = sensorhelper.executeCommand('java -version 2>&1 | sed -n 4p').strip()
+      path    = sensorhelper.executeCommand('which java').strip()
     
     appserver = buildAppServer(version, vendor, product, desc, sp, path, 'System Java')
     result.addExtendedResult(appserver)
