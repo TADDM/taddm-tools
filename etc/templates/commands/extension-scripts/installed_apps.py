@@ -62,6 +62,7 @@ def LogError(msg):
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
   errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
   log.error(errMsg)
+  #log.error('TB:' + str(traceback.format_tb(ErrorTB)))
 
 def get_class_name(model_object):
   cn = model_object.__class__.__name__
@@ -181,15 +182,12 @@ try:
     
   # SAP BO client
   try:
-    if "Windows" == os_type:
-      inventory_txt = sensorhelper.getFile('C:\\Program Files (x86)\\SAP BusinessObjects\\InstallData\\inventory.txt')
-      log.info(str(inventory_txt.getContent())) # TODO remove
-      log.info(str(inventory_txt.getContent()).split()) # TODO remove
-      log.info(str(inventory_txt.getContent()).split()) # TODO remove
-      log.info(str(inventory_txt.getContent()).split()[4:8]) # TODO remove
-      version = ' '.join(inventory_txt.getContent().split()[4:8])
+    if "Windows" != os_type:
+      path = 'C:\\Program Files (x86)\\SAP BusinessObjects'
+      inventory_txt = sensorhelper.getFile(path + '\\InstallData\\inventory.txt')
+      version = ' '.join(str(inventory_txt.getContent()).splitlines()[0].split()[4:8])
             
-      appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
+      appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, path, 'BusinessObjects Client')
       
       result.addExtendedResult(appserver)
   except:
@@ -200,8 +198,8 @@ try:
 
   # DB2 client
   try:
-    if "Windows" == os_type:
-      inventory_txt = sensorhelper.getFile('db2licm.txt')
+    if "Windows" != os_type:
+      inventory_txt = sensorhelper.getFile('/home/taddm/db2licm.txt')
       #version = ' '.join(str(inventory_txt.getContent()).split()[4:8])
             
       #appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
