@@ -62,7 +62,7 @@ def LogError(msg):
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
   errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
   log.error(errMsg)
-  #log.error('TB:' + str(traceback.format_tb(ErrorTB)))
+  log.error('TB:' + str(traceback.format_tb(ErrorTB)))
 
 def get_class_name(model_object):
   cn = model_object.__class__.__name__
@@ -199,15 +199,26 @@ try:
   # DB2 client
   try:
     if "Windows" != os_type:
-      inventory_txt = sensorhelper.getFile('/home/taddm/db2licm.txt')
-      #version = ' '.join(str(inventory_txt.getContent()).split()[4:8])
-            
-      #appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
+      home_dir = sensorhelper.executeCommand('echo $HOME')
+      db2licm_txt = sensorhelper.getFile(home_dir + '/db2licm.txt')
+      content = db2licm_txt.getContent()
+      populated = False
+      for line in content.splitlines():
+        if line.strip() != '':
+          populated = True
       
-      #result.addExtendedResult(appserver)
+      # if db2licm file is empty, then there is a DB2 client installed
+      if not populated:
+        
+        path    = sensorhelper.executeCommand('ls /opt/ibm/db2/*/bin/db2'
+        version = sensorhelper.executeCommand('/opt/ibm/db2/*/bin/db2level | grep \'^Informational tokens\' | awk -F\\" \'{print $2}\' | awk \'{print $2}\'')
+            
+        appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, path, 'BusinessObjects Client')
+      
+        #result.addExtendedResult(appserver)
   except:
     # TODO remove LogError
-    #LogError('DB2 client failed')
+    LogError('DB2 client failed')
     log.info('DB2 client not installed')
     pass
     
