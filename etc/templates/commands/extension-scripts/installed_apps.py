@@ -199,23 +199,16 @@ try:
   # DB2 client
   try:
     if "Windows" != os_type:
-      home_dir = sensorhelper.executeCommand('echo -n $HOME').strip()
-      db2licm_txt = sensorhelper.getFile(home_dir + '/db2licm.txt')
-      content = db2licm_txt.getContent()
-      populated = False
-      for line in content.splitlines():
-        if line.strip() != '':
-          populated = True
-      
-      # if db2licm file is empty, then there is a DB2 client installed
-      if not populated:
-        
-        path    = sensorhelper.executeCommand('ls /opt/ibm/db2/*/bin/db2')
-        version = sensorhelper.executeCommand('/opt/ibm/db2/*/bin/db2level | grep \'^Informational tokens\' | awk -F\\" \'{print $2}\' | awk \'{print $2}\'')
-            
-        appserver = buildAppServer(version, 'IBM', 'DB2 Client', None, None, path, 'DB2 Client')
-      
-        result.addExtendedResult(appserver)
+      db2ls_out = sensorhelper.executeCommand('db2ls -c')
+      for line in db2ls_out.splitlines()[1:]:
+        path = line.split(':')[0]
+        db2ls_prod = sensorhelper.executeCommand('db2ls -q -p -c -b ' + path)
+        for pline in db2ls_prod.splitlines()[1:]:
+          prod = pline.split(':')[0]
+          version = pline.split(':')[1]
+          if prod == 'RUNTIME_CLIENT':
+            appserver = buildAppServer(version, 'IBM', 'DB2 Client', None, None, path, 'DB2 Client')
+            result.addExtendedResult(appserver)
   except:
     # TODO remove LogError
     LogError('DB2 client failed')
