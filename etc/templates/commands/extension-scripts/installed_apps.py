@@ -183,6 +183,10 @@ try:
   try:
     if "Windows" == os_type:
       inventory_txt = sensorhelper.getFile('C:\\Program Files (x86)\\SAP BusinessObjects\\InstallData\\inventory.txt')
+      log.info(str(inventory_txt.getContent())) # TODO remove
+      log.info(str(inventory_txt.getContent()).split()) # TODO remove
+      log.info(str(inventory_txt.getContent()).split()) # TODO remove
+      log.info(str(inventory_txt.getContent()).split()[4:8]) # TODO remove
       version = ' '.join(inventory_txt.getContent().split()[4:8])
             
       appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
@@ -198,18 +202,14 @@ try:
   try:
     if "Windows" == os_type:
       inventory_txt = sensorhelper.getFile('db2licm.txt')
-      log.info(str(inventory_txt.getContent())) # TODO remove
-      log.info(str(inventory_txt.getContent()).split()) # TODO remove
-      log.info(str(inventory_txt.getContent()).split()) # TODO remove
-      log.info(str(inventory_txt.getContent()).split()[4:8]) # TODO remove
-      version = ' '.join(str(inventory_txt.getContent()).split()[4:8])
+      #version = ' '.join(str(inventory_txt.getContent()).split()[4:8])
             
-      appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
+      #appserver = buildAppServer(version, 'SAP', 'BusinessObjects Client', None, None, None, 'BusinessObjects Client')
       
-      result.addExtendedResult(appserver)
+      #result.addExtendedResult(appserver)
   except:
     # TODO remove LogError
-    LogError('DB2 client failed')
+    #LogError('DB2 client failed')
     log.info('DB2 client not installed')
     pass
     
