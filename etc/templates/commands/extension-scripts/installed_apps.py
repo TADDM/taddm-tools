@@ -139,14 +139,16 @@ try:
   # Java
   try:
     if "Windows" == os_type:
-      version_out = sensorhelper.executeCommand('java -version').strip()
+      version_out = sensorhelper.executeCommand('java -version 2>&1').strip()
       second_line = version_out.splitlines()[1].split()
       
       version = version_out.splitlines()[0].split("\"")[1]
       vendor  = version_out.splitlines()[2].split()[0]
       product = second_line[0]
       desc    = ' '.join(second_line[:4])
-      sp      = version_out.splitlines()[3]
+      # System Java on Windows does not print the 4th line that has the service pack
+      #sp      = version_out.splitlines()[3]
+      sp      = None
       path    = sensorhelper.executeCommand('where java').strip()
     else:
       version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
