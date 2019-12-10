@@ -81,7 +81,7 @@ try:
       if t.find("-Dcatalina.home=") != -1:
         catalina_home = t.split("=")[1]
         log.info("Catalina Home from command line = " + catalina_home)
-        version = sensorhelper.executeCommand(catalina_home + '/bin/version.sh | grep \'^Server number:\' | awk \'{print $3}\'')
+        version = sensorhelper.executeCommand('cd ' + catalina_home + '/bin' + ';./version.sh | grep \'^Server number:\' | awk \'{print $3}\'')
         appserver.setVendorName('The Apache Group')
         appserver.setProductName('Tomcat')
         appserver.setProductVersion(version)
