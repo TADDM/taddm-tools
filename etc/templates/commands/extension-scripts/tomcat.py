@@ -84,25 +84,8 @@ try:
         version = sensorhelper.executeCommand('cd ' + catalina_home + '/bin' + ';./version.sh | grep \'^Server number:\' | awk \'{print $3}\'')
         appserver.setVendorName('The Apache Group')
         appserver.setProductName('Tomcat')
-        appserver.setProductVersion(version)
+        appserver.setProductVersion(version.strip())
         break
-
-		# if isWindows == 1:
-			# homeDir = sensorhelper.executeCommand("mysql -u " + auth.getUserName() + " --password="+auth.getPassword()+" -s -e  \"SHOW VARIABLES LIKE '%basedir%'\"")
-		# else:
-			# homeDir = sensorhelper.executeCommand("mysql -u " + auth.getUserName() + " --password="+auth.getPassword()+" --socket=" + socketPath + " -s -e  \"SHOW VARIABLES LIKE '%basedir%'\" | grep basedir | awk '{print $NF}'")
-		# appserver.setHome(homeDir.strip())
-		# configFile = sensorhelper.newModelObject('cdm:app.ConfigFile')
-                # configFile.setURI("config://" + seed.getPrimaryIpAddress().getStringNotation() + ":" + str(seed.getPort()) + "/MySql/databaselist")
-
-		# if isWindows == 1:
-			# res = sensorhelper.executeCommand("mysql -u " + auth.getUserName() + " --password="+auth.getPassword()+" -s -e \"show databases;\"")
-		# else:
-			# res = sensorhelper.executeCommand("mysql -u " + auth.getUserName() + " --password="+auth.getPassword()+" --socket=" + socketPath + " -s -e \"show databases;\"")
-		# configFile.setContent(res)
-		# ac = sensorhelper.newModelObject('cdm:app.AppConfig');
-		# ac.setParent(appserver)
-		# ac.setContent(configFile)
 
 except: 
   #Something failed and threw an exception.  Call the error logger 
