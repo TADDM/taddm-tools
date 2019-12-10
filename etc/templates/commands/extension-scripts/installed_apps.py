@@ -163,8 +163,26 @@ try:
     result.addExtendedResult(appserver)
     
   except:
-    LogError('Java failed')
+    #LogError('Java failed')
     log.info('One of the java commands failed or java is not installed on path')
+    pass
+
+  # Python (default)
+  try:
+    if "Windows" != os_type:
+      version = sensorhelper.executeCommand('python --version 2>&1 | awk \'{print $2}\'').strip()
+      vendor  = 'Python'
+      product = 'Python'
+      desc    = None
+      sp      = None
+      path    = sensorhelper.executeCommand('readlink -f `which python`').strip()
+    
+      appserver = buildAppServer(version, vendor, product, desc, sp, path, 'Python')
+      result.addExtendedResult(appserver)
+    
+  except:
+    LogError('Python failed')
+    log.info('One of the python commands failed or python is not installed on path')
     pass
 
   # Ant
@@ -182,7 +200,9 @@ try:
     
   # SAP BO client
   try:
-    if "Windows" != os_type:
+    if "Windows" == os_type:
+      log.info('TODO')
+    else:
       path = 'C:\\Program Files (x86)\\SAP BusinessObjects'
       inventory_txt = sensorhelper.getFile(path + '\\InstallData\\inventory.txt')
       version = ' '.join(str(inventory_txt.getContent()).splitlines()[0].split()[4:8])
@@ -200,7 +220,7 @@ try:
   try:
     if "Windows" == os_type:
       cmd = 'powershell -Command ' \
-             '"& { get-wmiobject -class win32_product | where-object {$_.Name -match \'IBM Data Server Client\'} | format-list -property Name,Version,InstallLocation}"'
+            '"& { get-wmiobject -class win32_product | where-object {$_.Name -match \'IBM Data Server (Runtime )*Client\'} | format-list -property Name,Version,InstallLocation}"'
       db2_prod = sensorhelper.executeCommand(cmd)
       for line in db2_prod.splitlines():
         if line.startswith('Name'):
@@ -224,8 +244,6 @@ try:
             appserver = buildAppServer(version, 'IBM', 'DB2 Client', None, None, path, 'DB2 Client')
             result.addExtendedResult(appserver)
   except:
-    # TODO remove LogError
-    LogError('DB2 client failed')
     log.info('DB2 client not installed')
     pass
     
