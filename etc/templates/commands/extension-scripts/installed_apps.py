@@ -201,8 +201,6 @@ try:
   # SAP BO client
   try:
     if "Windows" == os_type:
-      log.info('TODO')
-    else:
       path = 'C:\\Program Files (x86)\\SAP BusinessObjects'
       inventory_txt = sensorhelper.getFile(path + '\\InstallData\\inventory.txt')
       version = ' '.join(str(inventory_txt.getContent()).splitlines()[0].split()[4:8])
@@ -211,9 +209,22 @@ try:
       
       result.addExtendedResult(appserver)
   except:
-    # TODO remove LogError
-    LogError('BO failed')
     log.info('BO client not installed')
+    pass
+
+  # DataStage Windows client
+  try:
+    if "Windows" == os_type:
+      path = 'C:\\IBM\\InformationServer'
+      version_txt = sensorhelper.getFile(path + '\\Version.xml')
+      # Version.xml file exists, continue by querying version from registory b/c it's easier than parsing XML
+      version = sensorhelper.executeCommand('FOR /F "skip=2 tokens=2,*" %A IN (\'reg.exe query "HKLM\SOFTWARE\WOW6432Node\IBM\InformationServer\CurrentVersion " /v "Version"\') DO @echo "%B"')
+            
+      appserver = buildAppServer(version, 'IBM', 'InformationServer Client', None, None, path, 'InformationServer Client')
+      
+      result.addExtendedResult(appserver)
+  except:
+    log.info('DataStage Windows client not installed')
     pass
 
   # DB2 client
