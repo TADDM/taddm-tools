@@ -198,7 +198,21 @@ try:
 
   # DB2 client
   try:
-    if "Windows" != os_type:
+    if "Windows" == os_type:
+      cmd = 'powershell -Command ' \
+             '"& { get-wmiobject -class win32_product | where-object {$_.Name -match \'IBM Data Server Client\'} | format-list -property Name,Version,InstallLocation}"'
+      db2_prod = sensorhelper.executeCommand(cmd)
+      for line in db2_prod.splitlines():
+        if line.startswith('Name'):
+          name = line.split(':')[1].strip()
+        if line.startswith('Version'):
+          version = line.split(':')[1].strip()
+        if line.startswith('InstallLocation'):
+          path = ':'.join(line.split(':')[1:]).strip()
+          appserver = buildAppServer(version, 'IBM', 'DB2 Client', None, None, path, 'DB2 Client')
+          appserver.setLabel(computersystem.getFqdn() + ':' + name) # override label
+          result.addExtendedResult(appserver)
+    else:
       db2ls_out = sensorhelper.executeCommand('db2ls -c')
       for line in db2ls_out.splitlines()[1:]:
         path = line.split(':')[0]
