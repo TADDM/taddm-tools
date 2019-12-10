@@ -218,7 +218,7 @@ try:
       path = 'C:\\IBM\\InformationServer'
       version_txt = sensorhelper.getFile(path + '\\Version.xml')
       # Version.xml file exists, continue by querying version from registory b/c it's easier than parsing XML
-      version = sensorhelper.executeCommand('FOR /F "skip=2 tokens=2,*" %A IN (\'reg.exe query "HKLM\SOFTWARE\WOW6432Node\IBM\InformationServer\CurrentVersion " /v "Version"\') DO @echo "%B"')
+      version = sensorhelper.executeCommand('FOR /F "skip=2 tokens=2,*" %A IN (\'reg.exe query "HKLM\SOFTWARE\WOW6432Node\IBM\InformationServer\CurrentVersion " /v "Version"\') DO @echo %B')
             
       appserver = buildAppServer(version, 'IBM', 'InformationServer Client', None, None, path, 'InformationServer Client')
       
