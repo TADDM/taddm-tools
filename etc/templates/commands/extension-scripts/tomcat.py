@@ -77,14 +77,16 @@ try:
 
   args = sensorhelper.splitArgs(seed.getCmdLine())
   if args is not None:
-    java_cmd = args[0].replace('"', '')
-    if ' ' in java_cmd:
-      java_path = '\\'.join(java_cmd.split('\\')[:-1])
-      if java_path == '':
-        java_cmd = 'java'
-      else:
-        # add java to path and execute java
-        java_cmd = 'cd "' + java_path + '" & .\\java'
+    if 'java' in args[0]:
+      java_cmd = args[0].replace('"', '')
+      if ' ' in java_cmd:
+        java_path = '\\'.join(java_cmd.split('\\')[:-1])
+        if java_path == '':
+          java_cmd = 'java'
+        else:
+          # add java to path and execute java
+          java_cmd = 'cd "' + java_path + '" & .\\java'
+      log.info("Setting java command = " + java_cmd)
     next = False
     for t in args[1:]:
       LogDebug('Looking at argument: ' + t)
@@ -95,21 +97,26 @@ try:
           continue
         if next:
           catalina_home = t
+          next = False
         else:
           catalina_home = t.split("=")[1]
         catalina_home = catalina_home.replace('"', '')
         log.info("Catalina Home from command line = " + catalina_home)
-        slash = '/'
-        if sensorhelper.targetIsWindows(os_handle):
-          slash = '\\'
-        server_info = sensorhelper.executeCommand(java_cmd + ' -cp ' +'"'+catalina_home + slash+'lib'+slash+'catalina.jar" org.apache.catalina.util.ServerInfo')
-        version = re.findall("^Server number:.*", server_info ,re.MULTILINE)[0].split()[2].strip()
-        log.info('Setting productVersion to ' + version)
-        appserver.setVendorName('The Apache Group')
-        appserver.setProductName('Tomcat')
-        appserver.setProductVersion(version)
-        break
-except: 
+      elif t.find("-Djava.library.path") and not java_cmd:
+        LogDebug('Found argument: ' + t)
+        java_cmd = 'cd "' + t.replace('"', '').split("=")[1] + '" & .\java'
+        log.info("Setting java command = " + java_cmd)
+
+    slash = '/'
+    if sensorhelper.targetIsWindows(os_handle):
+      slash = '\\'
+    server_info = sensorhelper.executeCommand(java_cmd + ' -cp ' +'"'+catalina_home + slash+'lib'+slash+'catalina.jar" org.apache.catalina.util.ServerInfo')
+    version = re.findall("^Server number:.*", server_info ,re.MULTILINE)[0].split()[2].strip()
+    log.info('Setting productVersion to ' + version)
+    appserver.setVendorName('The Apache Group')
+    appserver.setProductName('Tomcat')
+    appserver.setProductVersion(version)
+except:
   #Something failed and threw an exception.  Call the error logger 
   #so that the stack trace gets logged 
   LogError("unexpected exception discovering Tomcat")
