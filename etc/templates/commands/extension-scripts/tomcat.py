@@ -77,7 +77,12 @@ try:
 
   args = sensorhelper.splitArgs(seed.getCmdLine())
   if args is not None:
-    if 'java' in args[0]:
+    if \
+    'backgrounder.exe' in args[0] or \
+    'searchserver.exe' in args[0] or \
+    'vizportal.exe' in args[0]: # Tableau
+      java_cmd = None
+    else:
       java_cmd = args[0].replace('"', '')
       if ' ' in java_cmd:
         java_path = '\\'.join(java_cmd.split('\\')[:-1])
@@ -102,10 +107,11 @@ try:
           catalina_home = t.split("=")[1]
         catalina_home = catalina_home.replace('"', '')
         log.info("Catalina Home from command line = " + catalina_home)
-      elif t.find("-Djava.library.path") and not java_cmd:
-        LogDebug('Found argument: ' + t)
-        java_cmd = 'cd "' + t.replace('"', '').split("=")[1] + '" & .\java'
-        log.info("Setting java command = " + java_cmd)
+        break
+    if not java_cmd:
+      # Java location for Tableau
+      java_cmd = 'cd "' + '/'.join(catalina_home.split('/')[:-1]) + '/repository/jre/bin" & .\java'
+      log.info("Setting java command = " + java_cmd)
 
     slash = '/'
     if sensorhelper.targetIsWindows(os_handle):
