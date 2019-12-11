@@ -52,9 +52,9 @@ import sensorhelper
 # LogError      Error logger 
 ######################## 
 def LogError(msg): 
-  print "LogError",msg 
-  (ErrorType, ErrorValue, ErrorTB) = sys.exc_info() 
-  traceback.print_exc(ErrorTB) 
+  (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+  log.error(msg + '\n' + str(ErrorValue))
+  log.error('traceback:' + str(traceback.format_tb(ErrorTB)))
   
 # LogDebug      Print routine for normalized messages in log
 ########################
@@ -77,16 +77,35 @@ try:
 
   args = sensorhelper.splitArgs(seed.getCmdLine())
   if args is not None:
-    for t in args:
-      if t.find("-Dcatalina.home=") != -1:
-        catalina_home = t.split("=")[1]
+    java_cmd = args[0].replace('"', '')
+    if ' ' in java_cmd:
+      java_path = '\\'.join(java_cmd.split('\\')[:-1])
+      # add java to path and execute java
+      java_cmd = 'cd "' + java_path + '" & .\\java.exe'
+    next = False
+    for t in args[1:]:
+      LogDebug('Looking at argument: ' + t)
+      if t.find("-Dcatalina.home=") != -1 or next:
+        LogDebug('Found argument: ' + t)
+        if t == '-Dcatalina.home=':
+          next = True # Windows and the value is quoted, the next arg is what is needed
+          continue
+        if next:
+          catalina_home = t
+        else:
+          catalina_home = t.split("=")[1]
+        catalina_home = catalina_home.replace('"', '')
         log.info("Catalina Home from command line = " + catalina_home)
-        version = sensorhelper.executeCommand('cd ' + catalina_home + '/bin' + ';./version.sh | grep \'^Server number:\' | awk \'{print $3}\'')
+        slash = '/'
+        if sensorhelper.targetIsWindows(os_handle):
+          slash = '\\'
+        server_info = sensorhelper.executeCommand(java_cmd + ' -cp ' +'"'+catalina_home + slash+'lib'+slash+'catalina.jar" org.apache.catalina.util.ServerInfo')
+        version = re.findall("^Server number:.*", server_info ,re.MULTILINE)[0].split()[2].strip()
+        log.info('Setting productVersion to ' + version)
         appserver.setVendorName('The Apache Group')
         appserver.setProductName('Tomcat')
-        appserver.setProductVersion(version.strip())
+        appserver.setProductVersion(version)
         break
-
 except: 
   #Something failed and threw an exception.  Call the error logger 
   #so that the stack trace gets logged 
