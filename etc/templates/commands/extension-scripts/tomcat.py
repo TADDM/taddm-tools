@@ -80,8 +80,11 @@ try:
     java_cmd = args[0].replace('"', '')
     if ' ' in java_cmd:
       java_path = '\\'.join(java_cmd.split('\\')[:-1])
-      # add java to path and execute java
-      java_cmd = 'cd "' + java_path + '" & .\\java.exe'
+      if java_path == '':
+        java_cmd = 'java'
+      else:
+        # add java to path and execute java
+        java_cmd = 'cd "' + java_path + '" & .\\java'
     next = False
     for t in args[1:]:
       LogDebug('Looking at argument: ' + t)
