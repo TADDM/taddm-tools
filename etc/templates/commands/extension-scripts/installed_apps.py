@@ -151,6 +151,8 @@ try:
       # System Java on Windows does not print the 4th line that has the service pack
       sp      = None
       path    = sensorhelper.executeCommand('where java').strip()
+      if len(path.splitlines()) > 1:
+        path = path.splitlines()[0]
     else:
       version = sensorhelper.executeCommand('java -version 2>&1 | head -n 1 | awk -F \'"\' \'{print $2}\'').strip()
       vendor  = sensorhelper.executeCommand('java -version 2>&1 | sed -n 3p | awk \'{print $1}\'').strip()
@@ -188,7 +190,7 @@ try:
   # Ant
   try:
     if "Windows" != os_type:
-      version = sensorhelper.executeCommand('ant -version | cut -c 24-28').strip()
+      version = sensorhelper.executeCommand('ant -version | awk \'{print $4}\'').strip()
       path    = sensorhelper.executeCommand('which ant').strip()
       
       appserver = buildAppServer(version, 'The Apache Group', 'Ant', None, None, path, 'Ant')
