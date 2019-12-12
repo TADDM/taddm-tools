@@ -1,4 +1,5 @@
 SELECT
+	CONCAT(CONCAT('"', NVL(CS1.DISPLAYNAME_C, '')), '"') AS FQDN,
   CONCAT(CONCAT('"', NVL(A1.DISPLAYNAME_C, NVL(A1.NAME_C, NVL(A1.LABEL_C, '')))), '"') AS "Name",
   -- TODO use CASE here
   CASE WHEN A1.JDOCLASS_C LIKE '%.AppServerJdo' THEN '"Application Server"'
@@ -6,14 +7,16 @@ SELECT
     WHEN A1.JDOCLASS_C LIKE '%.ApacheServerJdo' THEN '"Apache Server"'
     WHEN A1.JDOCLASS_C LIKE '%.Db2InstanceJdo' THEN '"DB2 Instance"'
     WHEN A1.JDOCLASS_C LIKE '%.JBossServerJdo' THEN '"JBoss Server"'
+    WHEN A1.JDOCLASS_C LIKE '%.DatabaseServerJdo' THEN '"Database Server"'
+    WHEN A1.JDOCLASS_C LIKE '%.J2EEServerJdo' THEN '"J2EE Server"'
+    WHEN A1.JDOCLASS_C LIKE '%.VirtualCenterJdo' THEN '"Virtual Center"'
     ELSE REPLACE(REPLACE(A1.JDOCLASS_C, 'com.collation.topomgr.jdo.topology.', ''), 'Jdo', '')
   END AS "Type",
-	CONCAT(CONCAT('"', NVL(A1.VENDORNAME_C, '')), '"') AS Vendor,
-	CONCAT(CONCAT('"', NVL(A1.PRODUCTNAME_C, NVL(A1.OBJECTTYPE_C, ''))), '"') AS Product,
+	CONCAT(CONCAT('"', NVL(A1.VENDORNAME_C, '')), '"') AS "Vendor",
+	CONCAT(CONCAT('"', NVL(A1.PRODUCTNAME_C, NVL(A1.OBJECTTYPE_C, ''))), '"') AS "Product",
   CASE WHEN JBOSS.PRODUCTVERSION_C IS NOT NULL THEN CONCAT(CONCAT('"', JBOSS.PRODUCTVERSION_C), '"')
 	  ELSE CONCAT(CONCAT('"', NVL(A1.PRODUCTVERSION_C, '')), '"') 
-  END AS Version,
-	CONCAT(CONCAT('"', NVL(CS1.DISPLAYNAME_C, '')), '"') AS FQDN,
+  END AS "Version",
   -- this is the IP used during discovery
   CONCAT(CONCAT('"', NVL(A1.CONTEXTIP_C, '')), '"') AS IP
 FROM 
@@ -36,4 +39,5 @@ FROM
       MAJORVERSION_C IS NOT NULL AND
       RELEASE_C IS NOT NULL AND
       PRODUCTVERSION_C IS NULL
-  ) JBOSS ON A1.PK_C = JBOSS.PK_C  
+  ) JBOSS ON A1.PK_C = JBOSS.PK_C
+  ORDER BY FQDN ASC
