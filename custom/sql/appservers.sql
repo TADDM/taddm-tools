@@ -2,6 +2,10 @@ SELECT
   CONCAT(CONCAT('"', NVL(A1.DISPLAYNAME_C, NVL(A1.NAME_C, NVL(A1.LABEL_C, '')))), '"') AS "Name",
   -- TODO use CASE here
   CASE WHEN A1.JDOCLASS_C LIKE '%.AppServerJdo' THEN '"Application Server"'
+    WHEN A1.JDOCLASS_C LIKE '%.WebServerJdo' THEN '"Web Server"'
+    WHEN A1.JDOCLASS_C LIKE '%.ApacheServerJdo' THEN '"Apache Server"'
+    WHEN A1.JDOCLASS_C LIKE '%.Db2InstanceJdo' THEN '"DB2 Instance"'
+    WHEN A1.JDOCLASS_C LIKE '%.JBossServerJdo' THEN '"JBoss Server"'
     ELSE REPLACE(REPLACE(A1.JDOCLASS_C, 'com.collation.topomgr.jdo.topology.', ''), 'Jdo', '')
   END AS "Type",
 	CONCAT(CONCAT('"', NVL(A1.VENDORNAME_C, '')), '"') AS Vendor,
