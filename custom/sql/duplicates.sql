@@ -12,4 +12,5 @@ WHERE  T1.fqdn_c = T2.fqdn_c
        AND T1.pk__osrunning_c = OS1.pk_c
        AND T2.pk__osrunning_c = OS2.pk_c
        AND OS1.osconfidence_c = 100
-       AND OS2.osconfidence_c = 100  
+       AND OS2.osconfidence_c = 100
+ORDER BY T1.FQDN_C
