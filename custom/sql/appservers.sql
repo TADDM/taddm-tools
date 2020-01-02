@@ -1,7 +1,6 @@
 SELECT
 	CONCAT(CONCAT('"', NVL(CS1.DISPLAYNAME_C, '')), '"') AS FQDN,
   CONCAT(CONCAT('"', NVL(A1.DISPLAYNAME_C, NVL(A1.NAME_C, NVL(A1.LABEL_C, '')))), '"') AS "Name",
-  -- TODO use CASE here
   CASE WHEN A1.JDOCLASS_C LIKE '%.AppServerJdo' THEN '"Application Server"'
     WHEN A1.JDOCLASS_C LIKE '%.WebServerJdo' THEN '"Web Server"'
     WHEN A1.JDOCLASS_C LIKE '%.ApacheServerJdo' THEN '"Apache Server"'
@@ -32,7 +31,7 @@ FROM
     -- get the JBossServers where the version is stored in majorVersion/release
     SELECT
       PK_C,
-      CONCAT(MAJORVERSION_C, CONCAT('.', RELEASE_C)) AS PRODUCTVERSION_C
+      CONCAT(CAST(MAJORVERSION_C AS VARCHAR(20)), CONCAT('.', CAST(RELEASE_C AS VARCHAR(20)))) AS PRODUCTVERSION_C
     FROM 
       BB_JBOSSSERVER75_V
     WHERE
