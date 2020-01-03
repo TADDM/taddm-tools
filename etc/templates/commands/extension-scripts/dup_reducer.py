@@ -109,7 +109,7 @@ def tag_server(server):
     # also check to see if server is virtual
     tag = None
     tagfile = '.discoverytag-' + server.getName()
-    LogDebug("Using tag file name " + tagfile)
+    LogInfo("Using tag file name " + tagfile)
 
     try:
         # /tmp is the 'safest' place to keep it, however /tmp can be cleared out
@@ -118,16 +118,42 @@ def tag_server(server):
         # different command/location for Windows
         if sensorhelper.targetIsWindows():
             cmd = 'type C:\\' + tagfile # put in C:\ you can't use env variables here
-        # look for existing tag file under in home directory
-        tag = sensorhelper.executeCommand(cmd)
-        # if we get a result, set OpenID
-        if tag:
-            LogDebug('Setting OpenID using ' + tag.strip() + ' and ' + server.getName())
-            # feeding in server to OpenId() will set name attribute from server name
-            server.setOpenId(OpenId(server).addId('tag', tag.strip()).addId('name', None))
-        else:
-            # use try/except here because if .discoverytag doesn't exist an error is thrown
-            raise Exception()
+        try:
+            # look for existing tag file
+            tag = sensorhelper.executeCommand(cmd)
+            # if we get a result, set OpenID
+            if tag:
+                tag = tag.strip()
+                LogInfo('Setting OpenID using ' + tag + ' and ' + server.getName())
+                # feeding in server to OpenId() will set name attribute from server name
+                server.setOpenId(OpenId(server).addId('tag', tag).addId('name', None))
+        except:
+            # if Linux, also check home directory
+            if not sensorhelper.targetIsWindows():
+                # look for existing tag file in home directory
+                tag = sensorhelper.executeCommand('cat ' + tagfile)
+                if tag:
+                    tag = tag.strip()
+                    LogInfo('Setting OpenID using ' + tag + ' and ' + server.getName())
+                    # feeding in server to OpenId() will set name attribute from server name
+                    server.setOpenId(OpenId(server).addId('tag', tag).addId('name', None))
+                else:
+                    # use try/except here because if .discoverytag doesn't exist an error is thrown
+                    raise Exception()
+            else:
+                # use try/except here because if .discoverytag doesn't exist an error is thrown
+                raise Exception()
+
+        # make sure tag is synced between /tmp and ~/ for Linux
+        if not sensorhelper.targetIsWindows() and tag:
+          # put tag in /tmp and home directory
+          cmd = 'echo ' + tag + ' | tee /tmp/' + tagfile + ' > ' + tagfile
+          try:
+              # put existing value in both locations
+              sensorhelper.executeCommand(cmd)
+          except:
+              LogError("Error occurred writing to .discoverytag, duplicate reducer unable to sync tag to both /tmp and home directory")
+        
     except:
         LogInfo(tagfile + ' is not present or empty')
         # use current time stamp (in millis) with the DiscoverWorker thread number appended to ensure uniqueness
@@ -142,14 +168,15 @@ def tag_server(server):
           LogInfo('Thread name format unexpected: ' + thread_name)
           raise Exception()
         tag = str(System.currentTimeMillis()) + '-' + thread_name
-        LogDebug('setting ' + tagfile + ' to ' + tag)
+        LogInfo('setting ' + tagfile + ' to ' + tag)
         try:
-            cmd = 'echo ' + tag + ' > /tmp/' + tagfile
+            # put tag in /tmp and home directory
+            cmd = 'echo ' + tag + ' | tee /tmp/' + tagfile + ' > ' + tagfile
             if sensorhelper.targetIsWindows():
                 cmd = 'echo ' + tag + ' > C:\\' + tagfile
             # put new calculated value back out on the server
             sensorhelper.executeCommand(cmd)
-            LogDebug('setting OpenID using ' + tag.strip() + ' and ' + server.getName())
+            LogInfo('setting OpenID using ' + tag.strip() + ' and ' + server.getName())
             # feeding in server to OpenId() will set name attribute from server name
             server.setOpenId(OpenId(server).addId('tag', tag).addId('name', None))
         except:
@@ -166,12 +193,12 @@ LogInfo('Duplicate Reducer 2.0 discovery extension started')
 try:
     # check if target is not marked as virtual and model contains 'virtual'
     if not (server.hasVirtual() and server.getVirtual()) and server.hasModel() and 'virtual' in server.getModel().lower():
-        LogDebug("Setting virtual to true")
+        LogInfo("Setting virtual to true")
         server.setVirtual(True)
 
     # check if target model is 'VMware Virtual Platform' but manufacturer is not set
     if server.hasModel() and server.getModel().startswith('VMware Virtual Platform') and not server.hasManufacturer():
-        LogDebug("Setting manufacturer to VMware, Inc.")
+        LogInfo("Setting manufacturer to VMware, Inc.")
         server.setManufacturer('VMware, Inc.')
 
     # should check to see if name is discovered, it's too dangerous to proceed without name
@@ -179,10 +206,10 @@ try:
         if server.hasVirtual() and server.getVirtual():
             tag_server(server)
         elif server.hasManufacturer() and server.hasModel() and not server.hasSerialNumber():
-            LogDebug('Physical server is missing serial number, tagging server')
+            LogInfo('Physical server is missing serial number, tagging server')
             tag_server(server)
         else:
-            LogDebug('Server is not virtual, skipping tag file')
+            LogInfo('Server is not virtual, skipping tag file')
     else:
         log.warning('Name is not discovered, duplicate reducer discovery extension requires name discovery')
         result.warning('Name is not discovered, duplicate reducer discovery extension requires name discovery')
