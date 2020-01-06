@@ -257,7 +257,7 @@ try:
         for pline in db2ls_prod.splitlines()[1:]:
           prod = pline.split(':')[0]
           version = pline.split(':')[1]
-          if prod == 'RUNTIME_CLIENT':
+          if prod == 'RUNTIME_CLIENT' or prod == 'CLIENT':
             appserver = buildAppServer(version, 'IBM', 'DB2 Client', None, None, path, 'DB2 Client')
             result.addExtendedResult(appserver)
   except:
