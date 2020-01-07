@@ -238,7 +238,8 @@ try:
     if "Windows" == os_type:
       cmd = 'powershell -Command ' \
             '"& { get-wmiobject -class win32_product | where-object {$_.Name -match \'IBM Data Server (Runtime )*Client\'} | format-list -property Name,Version,InstallLocation}"'
-      db2_prod = sensorhelper.executeCommand(cmd)
+      # running with 10 minute timeout because WMI query of product can run long on Windows
+      db2_prod = sensorhelper.executeCommandWithTimeout(cmd, 600000)
       for line in db2_prod.splitlines():
         if line.startswith('Name'):
           name = line.split(':')[1].strip()
