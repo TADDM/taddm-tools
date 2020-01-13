@@ -62,7 +62,7 @@ for root, dirs, files in os.walk(ext_path):
         pass
 
 # now import from extension-scripts
-import sudo
+from sudo import Validator
 
 ########################################################
 # More Standard Jython/Python Library Imports
@@ -99,9 +99,9 @@ def main():
     global log
 
     log.info("powermt discovery extension started (written by Mat Davis - mdavis5@us.ibm.com).")
-    #log.info('sys.path' + str(sys.path))
 
     try:
+      sudo = Validator()
       if sudo.validateSudo('/sbin/powermt'):
         output = sensorhelper.executeCommand('sudo /sbin/powermt display dev=all')
       else:

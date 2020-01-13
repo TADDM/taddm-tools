@@ -87,27 +87,29 @@ def get_os_type(os_handle):
     os_type = "UNKNOWN"
   return os_type
 
-sudo_list = None
-def validateSudo(cmd=None):
-  try:
-    if cmd:
-      global sudo_list
-      if sudo_list is None:
-        sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
-      # look for line containing (root) NOPASSWD: .*cmd.*
-      regex = re.compile('\(((root)|(ALL))\) NOPASSWD: .*' + cmd + '.*', re.MULTILINE | re.DOTALL)
-      if regex.search(sudo_list):
-        return True
+class Validator():
+  def __init__(self, sudo_list=None):
+    self.sudo_list = sudo_list
+    
+  def validateSudo(self, cmd=None):
+    try:
+      if cmd:
+        if self.sudo_list is None:
+          self.sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
+        # look for line containing (root) NOPASSWD: .*cmd.*
+        regex = re.compile('\(((root)|(ALL))\) NOPASSWD: .*' + cmd + '.*', re.MULTILINE | re.DOTALL)
+        if regex.search(self.sudo_list):
+          return True
+        else:
+          return False
       else:
-        return False
-    else:
-      try:
-        sudo_list = sensorhelper.executeCommand('sudo -l 2>&1')
-        return True
-      except:
-        return False
-  except:
-    return False
+        try:
+          self.sudo_list = sensorhelper.executeCommand('sudo -l 2>&1')
+          return True
+        except:
+          return False
+    except:
+      return False
 
 def main():
   ##########################################################
@@ -144,14 +146,15 @@ def main():
     xa['sudo_dmidecode'] = ''
     xa['sudo_rdm'] = ''
 
-    if validateSudo() is False:
+    val = Validator()
+    if val.validateSudo() is False:
       # sudo is not set up for this host
       log.info('sudo is invalid')
       xa['sudo_verified'] = 'invalid'
     else:
       log.info('sudo is valid')
       xa['sudo_verified'] = 'valid'
-      if validateSudo('lsof') is False:
+      if val.validateSudo('lsof') is False:
         xa['sudo_lsof'] = 'invalid'
       else:
         xa['sudo_lsof'] = 'valid'
@@ -167,10 +170,10 @@ def main():
         elif "Sun" == os_type:
           ce = 'collectionengine-solaris-sparc'
           
-        if validateSudo(ce):
+        if val.validateSudo(ce):
           log.info(ce + ' found in sudo')
           # check for fcinfo on Sun required by SolarisFC.py ext
-          if "Sun" == os_type and validateSudo('fcinfo') is False:
+          if "Sun" == os_type and val.validateSudo('fcinfo') is False:
             log.info('fcinfo for SolarisFC.py discovery extension not found in sudo')
             xa['sudo_hba'] = 'invalid'
           else:
@@ -182,7 +185,7 @@ def main():
 
       # check for Linux specific
       if "Linux" == os_type:
-        if validateSudo('dmidecode'):
+        if val.validateSudo('dmidecode'):
           xa['sudo_dmidecode'] = 'valid'
         else:
           xa['sudo_dmidecode'] = 'invalid'
@@ -200,7 +203,7 @@ def main():
           
           if re.search('.*EMC.*', lsscsi_out):
             log.info('Linux VM contains RDM, checking if sg_inq in sudo')
-            if validateSudo('sg_inq'):
+            if val.validateSudo('sg_inq'):
               xa['sudo_rdm'] = 'valid'
             else:
               log.info('sg_inq for RDM.py discovery extension not found in sudo')
