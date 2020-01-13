@@ -38,25 +38,42 @@ System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jyt
 System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython253_2.5.3/lib")
 
 jython_home = System.getProperty("jython.home")
-sys.path.append(jython_home + "/Lib")
-sys.path.append(coll_home + "/lib/sensor-tools")
-sys.path.append(coll_home + "/etc/templates/commands/extension-scripts") # for sudo.py
 sys.prefix = jython_home + "/Lib"
+
+########################################################
+# Jython/Python library imports from extension-scripts
+########################################################
+# add extension-scripts to sys.path if not already there
+ext_path = coll_home + '/etc/templates/commands/extension-scripts'
+if ext_path not in sys.path:
+  sys.path.append(ext_path)
+
+import os
+# when AnchorSensor copies compiled file *$py.class the $py is removed and this causes
+# runtime errors on the remote anchor, so rename any *.class to *$py.class
+for root, dirs, files in os.walk(ext_path):
+  for filename in files:
+    if filename.endswith('.class') and not filename.endswith('$py.class'):
+      basename = filename.split('.')[0]
+      try:
+        os.rename(ext_path + '/' + filename, ext_path + '/' + basename + '$py.class')
+      except:
+        print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
+        pass
+
+# now import from extension-scripts
+import sudo
 
 ########################################################
 # More Standard Jython/Python Library Imports
 ########################################################
 import traceback
+import re
 
 ########################################################
 # Custom Libraries to import (Need to be in the path)
 ########################################################
 import sensorhelper
-# sometimes on a remote anchor this will cause a ClassNotFoundException
-# when this import is done, TADDM should compile the sudo.py class and
-# there should be a sudo$py.class file, if not this error will occur.
-# To resolve, delete sudo.class from the remote anchor and run again
-import sudo
 
 ########################################################
 # LogError Error Logging
@@ -82,6 +99,7 @@ def main():
     global log
 
     log.info("powermt discovery extension started (written by Mat Davis - mdavis5@us.ibm.com).")
+    #log.info('sys.path' + str(sys.path))
 
     try:
       if sudo.validateSudo('/sbin/powermt'):
