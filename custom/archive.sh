@@ -39,7 +39,9 @@ if [ -e $ARCHIVEPROPS ]; then
     ARCHIVEDELETEAFTER=`awk -F= '/^archive.cleanup/ {print $2}' $ARCHIVEPROPS`
     SKIPZOS=`awk -F= '/^archive.skipzos/ {print $2}' $ARCHIVEPROPS`
     SKIPFAILED=`awk -F= '/^archive.skipfailed/ {print $2}' $ARCHIVEPROPS`
+    TADENV=`awk -F= '/^TADENV/ {print $2}' $ARCHIVEPROPS`
 else
+    TADENV="Unknown"
     echo "Properties file $ARCHIVEPROPS not found, using defaults"
 fi
 
@@ -112,7 +114,7 @@ fi
 
 if [ -n "$emailAddress" ]
 then
-    echo -e "Output of archive job attached.\n\n-TADDM Discovery" | mailx -s 'Archive Complete' -r "TADDM <${USER}@${HOSTNAME}>" -a $SCRIPTPATH/archive_${mydate}.out $emailAddress 2>/dev/null
+    echo -e "Output of archive job attached.\n\n-TADDM Discovery" | mailx -s 'Archive Complete in environment $TADENV' -r "TADDM <${USER}@${HOSTNAME}>" -a $SCRIPTPATH/archive_${mydate}.out $emailAddress 2>/dev/null
 fi
 
 rm $SCRIPTPATH/archive_${mydate}.out
