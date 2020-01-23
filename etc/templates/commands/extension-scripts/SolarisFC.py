@@ -123,6 +123,7 @@ try:
       hba_node_wwn = None
     elif re.search('Node WWN: [a-fA-F0-9]{16}', hba_line):
       hba_node_wwn = hba_line.split()[-1]
+      log.info('Found HBA Port ' + hba_port_wwn + ' and Node ' + hba_node_wwn)
       scsi_pc = sensorhelper.newModelObject('cdm:dev.SCSIProtocolController')
       scsi_pc.setName(WorldWideNameUtils.toUniformString(hba_node_wwn))
       scsi_pc.setParent(cs)
@@ -139,21 +140,23 @@ try:
         for line in rport_output.splitlines():
           if re.search('LUN: [0-9]+', line):
             lun = line.split()[-1]
-            #log.debug('LUN: ' + lun)
           elif re.search('OS Device Name: ', line):
             dev_name = line.split()[-1]
-            #log.debug('OS Device Name: ' + dev_name)
             # build FCVolume
-            fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
-            fcv.setSCSILun(long(lun))
-            fcv.setFCPLun(int(lun))
-            fcv.setName(dev_name.split('/')[-1][:-2])
-            fcv.setPortWWN(WorldWideNameUtils.toUniformString(hba_port_wwn))
-            fcv.setNodeWWN(WorldWideNameUtils.toUniformString(hba_node_wwn))
-            fcv.setParent(cs)
-            fcv.setController(scsi_pc)
-            log.debug(str(fcv))
-            result.addExtendedResult(fcv)
+            if dev_name != 'Unknown':
+              log.info('Found LUN ' + lun + ' and device name ' + dev_name)
+              fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
+              fcv.setSCSILun(long(lun))
+              fcv.setFCPLun(int(lun))
+              fcv.setName(dev_name.split('/')[-1][:-2])
+              fcv.setPortWWN(WorldWideNameUtils.toUniformString(hba_port_wwn))
+              fcv.setNodeWWN(WorldWideNameUtils.toUniformString(hba_node_wwn))
+              fcv.setParent(cs)
+              fcv.setController(scsi_pc)
+              log.debug(str(fcv))
+              result.addExtendedResult(fcv)
+            else:
+              log.info('Skipping OS Device Name \'Unknown\'')
 
   log.info("Solaris Fibre Channel discovery extension ended.")
 except CommandNotFoundError:
