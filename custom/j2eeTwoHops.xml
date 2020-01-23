@@ -1,0 +1,52 @@
+<xml>
+    <!-- 
+    This configuration is meant to be used for J2EE 3 tier applications.
+
+    Set the core CI to just the J2EE servers for the application with Lower-Down
+    traversal and this configuration will bring in all the web servers and database
+    servers for the application, in addition to the host computer systems of all
+    the components.
+    -->
+    <general>
+      <maxHopsLimit>2</maxHopsLimit>
+      <firstTierOnly>true</firstTierOnly>
+      <infoLevel>DETAILS</infoLevel>
+    </general>
+    <compositionConfiguration>
+      <includeInComposition>
+        <include type="simple.SComputerSystem"/>
+        <include type="simple.SSoftwareServer"/>
+      </includeInComposition>
+      <excludeFromComposition>
+        <exclude type="customCollection.GroupingPattern"/>
+        <exclude type="process.AccessCollection"/>
+      </excludeFromComposition>
+    </compositionConfiguration>
+    <traversalConfiguration>
+      <excludedRelationships>
+        <exclude source="{any}" target="{any}" relation="{any}"/>
+      </excludedRelationships>
+      <includedRelationships>
+        <!-- include databases used by the J2EE server -->
+        <include relation="only app.dependencies.TransactionalDependency" source="app.j2ee.J2EEServer" target="app.db.DatabaseServer" direction="DOWN"/>
+        <!-- This one might need reversed -->
+        <include relation="only app.dependencies.TransactionalDependency" source="app.j2ee.J2EEServer" target="app.web.WebServer" direction="DOWN"/>
+        <!-- include the ComputerSystem that hosts the servers -->
+        <include relation="relation.RunsOn" source="app.AppServer" target="sys.ComputerSystem" direction="DOWN"/>
+      </includedRelationships>
+    </traversalConfiguration>
+    <tiers>
+      <tier>
+        <name>Computer Systems</name>
+        <rule>
+          <className>ComputerSystem</className>
+        </rule>
+      </tier>
+      <tier>
+        <name>App Servers</name>
+        <rule>
+          <className>AppServer</className>
+        </rule>
+      </tier>
+    </tiers>
+</xml>
