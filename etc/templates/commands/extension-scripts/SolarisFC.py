@@ -142,21 +142,27 @@ try:
             lun = line.split()[-1]
           elif re.search('OS Device Name: ', line):
             dev_name = line.split()[-1]
-            # build FCVolume
-            if dev_name != 'Unknown':
-              log.info('Found LUN ' + lun + ' and device name ' + dev_name)
-              fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
-              fcv.setSCSILun(long(lun))
-              fcv.setFCPLun(int(lun))
-              fcv.setName(dev_name.split('/')[-1][:-2])
-              fcv.setPortWWN(WorldWideNameUtils.toUniformString(hba_port_wwn))
-              fcv.setNodeWWN(WorldWideNameUtils.toUniformString(hba_node_wwn))
-              fcv.setParent(cs)
-              fcv.setController(scsi_pc)
-              log.debug(str(fcv))
-              result.addExtendedResult(fcv)
-            else:
+            if dev_name.startswith('/dev/rmt/'):
+              log.info('Skipping tape drive: ' + dev_name)
+              continue
+            if dev_name == 'Unknown':
               log.info('Skipping OS Device Name \'Unknown\'')
+              continue
+            if dev_name.startswith('/devices/'):
+              log.info('Skipping device under /devices: ' + dev_name)
+              continue
+            # build FCVolume
+            log.info('Found LUN ' + lun + ' and device name ' + dev_name)
+            fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
+            fcv.setSCSILun(long(lun))
+            fcv.setFCPLun(int(lun))
+            fcv.setName(dev_name.split('/')[-1][:-2])
+            fcv.setPortWWN(WorldWideNameUtils.toUniformString(hba_port_wwn))
+            fcv.setNodeWWN(WorldWideNameUtils.toUniformString(hba_node_wwn))
+            fcv.setParent(cs)
+            fcv.setController(scsi_pc)
+            log.debug(str(fcv))
+            result.addExtendedResult(fcv)
 
   log.info("Solaris Fibre Channel discovery extension ended.")
 except CommandNotFoundError:
