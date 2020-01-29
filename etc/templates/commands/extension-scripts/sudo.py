@@ -49,6 +49,27 @@ ext_path = coll_home + '/lib/sensor-tools'
 if ext_path not in sys.path:
   sys.path.append(ext_path)
 
+# add extension-scripts to sys.path if not already there
+ext_path = coll_home + '/etc/templates/commands/extension-scripts'
+if ext_path not in sys.path:
+  sys.path.append(ext_path)
+  
+import os
+# when AnchorSensor copies compiled file *$py.class the $py is removed and this causes
+# runtime errors on the remote anchor, so rename any *.class to *$py.class
+for root, dirs, files in os.walk(ext_path):
+  for filename in files:
+    if filename.endswith('.class') and not filename.endswith('$py.class'):
+      basename = filename.split('.')[0]
+      try:
+        os.rename(ext_path + '/' + filename, ext_path + '/' + basename + '$py.class')
+      except:
+        print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
+        pass
+
+# Custom helper library from extension-scripts
+import helper
+  
 ########################################################
 # More Standard Jython/Python Library Imports
 ########################################################
@@ -255,7 +276,7 @@ def main():
           else:
             log.info('lsscsi output does not contain RDM')
                 
-    sensorhelper.setExtendedAttributes(computersystem, xa)
+    helper.setExtendedAttributes(computersystem, xa)
     log.info("sudo discovery extension ended")
   except:
     (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
