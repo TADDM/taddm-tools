@@ -1,3 +1,5 @@
+#!/usr/bin/env ../../../../bin/jython_coll_253
+
 ############### Begin Standard Header - Do not add comments here ##
 # Licensed Materials - Property of IBM
 # 5724-N55
@@ -40,14 +42,19 @@ System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jyt
 
 jython_home = System.getProperty("jython.home")
 sys.path.append(jython_home + "/Lib")
-sys.path.append(coll_home + "/lib/sensor-tools")
 sys.prefix = jython_home + "/Lib"
+
+# add extension-scripts to sys.path if not already there
+ext_path = coll_home + '/lib/sensor-tools'
+if ext_path not in sys.path:
+  sys.path.append(ext_path)
 
 ########################################################
 # More Standard Jython/Python Library Imports
 ########################################################
 import traceback
 import re
+import getopt
 
 ########################################################
 # Custom Libraries to import (Need to be in the path)
@@ -126,8 +133,8 @@ def main():
   # Main
   # Setup the various objects required for the extension
   ##########################################################
-  (os_handle, result, computersystem, seed, log) = sensorhelper.init(targets)
   global log
+  (os_handle, result, computersystem, seed, log) = sensorhelper.init(targets)
   
   try:
 
@@ -195,8 +202,8 @@ def main():
           pwd = sensorhelper.executeCommand('pwd').strip()
           xa['sudo_hba_path'] = 'invalid'
           for path in paths:
-            log.info('Checking path ' + path + ' against ' + pwd)
-            log.info('Split path ' + '/'.join(path.split('/')[:-1]))
+            log.debug('Checking path ' + path + ' against ' + pwd)
+            log.debug('Split path ' + '/'.join(path.split('/')[:-1]))
             if '/'.join(path.split('/')[:-1]) == pwd:
               xa['sudo_hba_path'] = 'valid'
           log.info('sudo hba (collectionengine) path is ' + str(xa['sudo_hba_path']))
@@ -256,5 +263,76 @@ def main():
     LogError(errMsg)
     result.warning(errMsg)
 
+def usage():
+    print """ \
+usage: sudo.py [options]
+
+   Define extended attributes
+
+    Options:
+
+    -u userid           User required to login to TADDM Server
+                        Defaults to 'administrator'
+
+    -p password         Password for TADDM Server user
+                        Defaults to 'collation'
+
+    -h                  print this message
+
+    """
+
 if __name__ == "__main__":
-  main()
+  try:
+    opts, args = getopt.getopt(sys.argv[1:], 'u:p:', ['help'] )
+  except getopt.GetoptError, err:
+    # print help information and exit:
+    print str(err) # will print something like "option -a not recognized"
+    usage()
+    sys.exit(2)
+
+  global userid
+  userid = None
+  global password
+  password = None
+  for o, a in opts:
+    if o == "-u":
+      userid = a
+    elif o == "-p":
+      password = a
+    elif o in ("-h", "--help"):
+      usage()
+      sys.exit()
+
+  create_ea = True
+  try:
+    # if this throws an error that we are local and creating EA
+    sensorhelper.init(targets)
+    create_ea = False
+  except:
+    pass
+    
+  if create_ea:
+    import ext_attr_helper as ea
+    # Import TADDM Pros library
+    from com.collation.platform.util import Props
+
+    #------------------------------------------------
+    # Set Defaults...
+    #------------------------------------------------
+    if userid is None:
+      userid = "administrator"
+
+    if password is None:
+      password = "collation"
+    #
+    # Initialize
+    #
+    api = ea.get_taddm_api(Props.getRmiBindHostname(), userid, password)
+    attr_names = [ 'sudo_verified', 'sudo_lsof', 'sudo_dmidecode', 'sudo_hba', 'sudo_hba_path', 'sudo_rdm' ]
+    for attr_name in attr_names:
+      print 'Creating ' + attr_name + ' String EA on UnitaryComputerSystem'
+      created = ea.createExtendedAttributes(api, attr_name, 'String', 'com.collation.platform.model.topology.sys.UnitaryComputerSystem')
+      print ' Success: ' + str(created)
+    api.close()
+  else:
+    main()
