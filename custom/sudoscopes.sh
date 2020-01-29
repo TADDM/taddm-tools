@@ -30,5 +30,8 @@ echo "# sudo_dmidecode_invalid" > scopes/sudo_dmidecode_invalid.scope
 echo "# sudo_hba_invalid" > scopes/sudo_hba_invalid.scope
 ./buildscope.jy -P -q "select * from ComputerSystem where XA eval '/xml[attribute[@name=\"sudo_hba\"]=\"invalid\"]' and ( virtual is-null or not virtual ) and lastModifiedTime > $epoch" >> scopes/sudo_hba_invalid.scope
 
+echo "# sudo_hba_path_invalid" > scopes/sudo_hba_path_invalid.scope
+./buildscope.jy -P -q "select * from ComputerSystem where XA eval '/xml[attribute[@name=\"sudo_hba_path\"]=\"invalid\"]' and ( virtual is-null or not virtual ) and lastModifiedTime > $epoch" >> scopes/sudo_hba_path_invalid.scope
+
 echo "# sudo_rdm_invalid" > scopes/sudo_rdm_invalid.scope
 ./buildscope.jy -P -q "select * from LinuxUnitaryComputerSystem where XA eval '/xml[attribute[@name=\"sudo_rdm\"]=\"invalid\"]' and lastModifiedTime > $epoch" >> scopes/sudo_rdm_invalid.scope

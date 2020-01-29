@@ -16,7 +16,7 @@ EMAIL=
 # SA organizations
 for org in `ls scopes/sudo_*invalid_*.scope | awk -F_ '{print $NF}' | awk -F\. '{print $1}' | sort | uniq`
 do
-  scopes=( "sudo" "sudo_lsof" "sudo_dmidecode" "sudo_hba" "sudo_rdm" )
+  scopes=( "sudo" "sudo_lsof" "sudo_dmidecode" "sudo_hba" "sudo_hba_path" "sudo_rdm" )
   attachments=""
   for scope in "${scopes[@]}"
   do
@@ -36,6 +36,7 @@ Key:
   sudo_lsof_invalid_${org}.scope - lsof not in sudo
   sudo_dmidecode_invalid_${org}.scope - dmidecode not in sudo for Linux host
   sudo_hba_invalid_${org}.scope - collectionengine not in sudo and/or fcinfo not in sudo for Solaris
+  sudo_hba_path_invalid_${org}.scope - collectionengine path mismatch, most likely unexpected home dir path for service account
   sudo_rdm_invalid_${org}.scope - sg_inq not in sudo for VMware Linux VM containing RDM
 
 Below is the combined sudoers configuration for Linux and Solaris:
