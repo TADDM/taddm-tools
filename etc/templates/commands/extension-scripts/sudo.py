@@ -111,6 +111,16 @@ class Validator():
     except:
       return False
 
+  # return full path(s) of command in sudoers
+  def commandPath(self, cmd):
+    paths = []
+    if self.sudo_list is None:
+      self.sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
+    for s in self.sudo_list.split():
+      if cmd in s:
+        paths.append(s.replace(',', ''))
+    return paths
+      
 def main():
   ##########################################################
   # Main
@@ -142,6 +152,7 @@ def main():
     
     xa = {}
     xa['sudo_hba'] = '' # for collectionengine and fcinfo on Solaris
+    xa['sudo_hba_path'] = '' # verify CE path matches home directory
     xa['sudo_lsof'] = ''
     xa['sudo_dmidecode'] = ''
     xa['sudo_rdm'] = ''
@@ -166,7 +177,7 @@ def main():
         log.info('Checking for HBA discovery commands on physical server')
         ce = 'collectionengine'
         if "Linux" == os_type:
-          ce = 'collectionengine-linux'
+          ce = 'collectionengine-linux-x86'
         elif "Sun" == os_type:
           ce = 'collectionengine-solaris-sparc'
           
@@ -178,11 +189,23 @@ def main():
             xa['sudo_hba'] = 'invalid'
           else:
             xa['sudo_hba'] = 'valid'
+
+          # check collectionengine path against home directory
+          paths = val.commandPath(ce)
+          pwd = sensorhelper.executeCommand('pwd').strip()
+          xa['sudo_hba_path'] = 'invalid'
+          for path in paths:
+            log.info('Checking path ' + path + ' against ' + pwd)
+            log.info('Split path ' + '/'.join(path.split('/')[:-1]))
+            if '/'.join(path.split('/')[:-1]) == pwd:
+              xa['sudo_hba_path'] = 'valid'
+          log.info('sudo hba (collectionengine) path is ' + str(xa['sudo_hba_path']))
+            
         else:
           log.info(ce + ' not found in sudo')
           xa['sudo_hba'] = 'invalid'
         log.info('sudo hba (collectionengine) is ' + str(xa['sudo_hba']))
-
+        
       # check for Linux specific
       if "Linux" == os_type:
         if val.validateSudo('dmidecode'):
