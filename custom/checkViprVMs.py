@@ -304,9 +304,12 @@ if __name__ == "__main__":
               print str(nv)
           print ''
         if len(notverifiedRDMLin) > 0:
-          print rdmMsg
+          printheader = True
           for nv in notverifiedRDMLin:
             if nv not in notverified:
+              if printheader:
+                print rdmMsg
+                printheader = False
               print str(nv)
           print ''
         if len(notverifiedRDMrh5) > 0:
