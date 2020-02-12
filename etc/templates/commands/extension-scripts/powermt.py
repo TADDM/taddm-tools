@@ -63,6 +63,7 @@ for root, dirs, files in os.walk(ext_path):
 
 # now import from extension-scripts
 from sudo import Validator
+import helper
 
 ########################################################
 # More Standard Jython/Python Library Imports
@@ -101,12 +102,16 @@ def main():
     log.info("powermt discovery extension started (written by Mat Davis - mdavis5@us.ibm.com).")
 
     try:
-      sudo = Validator()
-      if sudo.validateSudo('/sbin/powermt'):
-        output = sensorhelper.executeCommand('sudo /sbin/powermt display dev=all')
+      if helper.validateCommand('/sbin/powermt'):
+        sudo = Validator()
+        if sudo.validateSudo('/sbin/powermt'):
+          output = sensorhelper.executeCommand('sudo /sbin/powermt display dev=all')
+        else:
+          log.info('/sbin/powermt not in sudo, halting execution of disk discovery.')
+          raise CommandNotFoundError('/sbin/powermt not in sudo')
       else:
-        log.info('/sbin/powermt not in sudo, halting execution of disk discovery.')
-        raise CommandNotFoundError('/sbin/powermt not in sudo')
+        log.info('/sbin/powermt not installed, halting execution of disk discovery.')
+        raise CommandNotFoundError('/sbin/powermt not installed')
     except:
       log.info('sudo /sbin/powermt command failed, halting execution of disk discovery.')
       raise CommandNotFoundError('sudo /sbin/powermt command failed')

@@ -43,6 +43,8 @@ jython_home = System.getProperty("jython.home")
 sys.path.append(jython_home + "/Lib")
 sys.prefix = jython_home + "/Lib"
 
+import sensorhelper
+
 # Import the TADDM Java Libraries
 from com.collation.platform.model.util.ea import ExtendedAttributesData
  
@@ -76,3 +78,26 @@ def setExtendedAttributes(mo,exattrs,category=None):
        for name,value in exattrs.items():
         ead.addAttribute(name,value)
     ead.attachTo(mo)
+
+########################
+# validateCommand Runs command -v on target
+#
+#                       Parameters
+#                               cmd command name
+#
+#                       Returns
+#                               True if command is valid
+#                               False if command invalid
+#
+#                       Exceptions
+#                               
+########################
+def validateCommand(cmd):
+  try:
+    print 'validating command = ' + cmd
+    path = sensorhelper.executeCommand('command -v ' + cmd + ' 2>/dev/null')
+    print 'path found = ' + path
+    return True
+  except:
+    print 'command not found'
+    return False
