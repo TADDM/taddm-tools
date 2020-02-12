@@ -215,6 +215,9 @@ def main():
           if "Sun" == os_type and val.validateSudo('fcinfo') is False:
             log.info('fcinfo for SolarisFC.py discovery extension not found in sudo')
             xa['sudo_hba'] = 'invalid'
+          elif "Linux" == os_type and is_virtual is False and helper.validateCommand('/sbin/powermt') and val.validateSudo('powermt') is False:
+            log.info('/sbin/powermt for powermt.py discovery extension not found in sudo')
+            xa['sudo_hba'] = 'invalid'
           else:
             xa['sudo_hba'] = 'valid'
 
