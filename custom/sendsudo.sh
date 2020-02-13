@@ -35,7 +35,7 @@ Key:
   sudo_invalid_${org}.scope - sudo not configured or requiretty problem
   sudo_lsof_invalid_${org}.scope - lsof not in sudo
   sudo_dmidecode_invalid_${org}.scope - dmidecode not in sudo for Linux host
-  sudo_hba_invalid_${org}.scope - collectionengine not in sudo and/or fcinfo not in sudo for Solaris
+  sudo_hba_invalid_${org}.scope - collectionengine not in sudo and/or fcinfo not in sudo for Solaris and/or powermt not in sudo for physical Linux if installed
   sudo_hba_path_invalid_${org}.scope - collectionengine path mismatch, most likely unexpected home dir path for service account
   sudo_rdm_invalid_${org}.scope - sg_inq not in sudo for VMware Linux VM containing RDM
 
@@ -45,7 +45,8 @@ Defaults !requiretty
 (root) NOPASSWD: /usr/sbin/dmidecode, /usr/sbin/lsof, /usr/local/bin/lsof, /opt/VRTSvcs/bin/hastatus,
     /opt/VRTSvcs/bin/haclus, /opt/VRTSvcs/bin/hasys, /opt/VRTSvcs/bin/hares, /opt/VRTSvcs/bin/hagrp,
     /opt/VRTSvcs/bin/hatype, /opt/VRTSvcs/bin/hauser, /var/TADDM/home/tadmadm/collectionengine-linux-x86*,
-    /var/TADDM/home/tadmadm/collectionengine-solaris-sparc, /usr/sbin/fcinfo, /usr/bin/sg_inq
+    /var/TADDM/home/tadmadm/collectionengine-solaris-sparc, /usr/sbin/fcinfo, /usr/bin/sg_inq,
+	/sbin/powermt display dev\=all
 EOL
   fi
 done
