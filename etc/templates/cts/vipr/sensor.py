@@ -932,7 +932,7 @@ try:
               # Unity/VNXe
               #
               ######
-              filter = 'filter=parttype=%27LUN%27%26serialnb=%27' + sss.getSerialNumber() + '%27'
+              filter = 'filter=parttype=%27LUN%27%26serialnb=%27' + sss.getSerialNumber() + '%27%26%21vstatus%3D%27inactive%27'
               fields = 'fields=part,srclun,wwn'
               volumeOutput = getPropertiesValues(filter, fields)
 
@@ -955,9 +955,11 @@ try:
                   sv.setName(part)
                   sv.setLUN(int(srclun))
                   sv.setBlockSize(long(512))
+                  sv.setManagedSystemName(wwn) # this is the UUID for the LUN
 
                   setVolumeCapacity(sv, part, volumeCapMap, volumeUsedCapMap)
                   
+                  # Unity is not connected through VPLEX, so this should never be True
                   if wwn in vdiskByLun:
                     #log.debug('Found matching wwn: ' + partsn)
                     set_array_to_vplex(sss, sv, 'Unity')
