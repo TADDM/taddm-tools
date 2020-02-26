@@ -282,13 +282,21 @@ def main():
     # cache the FCVolumes
     fcv_stmt = dbConn.createStatement()
     sql_query = (
-      'SELECT CS.GUID_C AS CS_GUID, FCV.DEVICEID_C AS DEVICEID, FCV.FCPLUN_C AS FCPLUN, FCV.PORTWWN_C AS PORTWWN, FCV.NAME_C AS NAME, FCV.GUID_C AS GUID ' +
-      'FROM BB_FCVOLUME55_V FCV, BB_COMPUTERSYSTEM40_V CS WHERE FCV.PK__PARENTSTORAGEEXTENT_C = CS.PK_C ')
+      'SELECT ' +
+       'CS.GUID_C AS CS_GUID, FCV.DEVICEID_C AS DEVICEID, FCV.FCPLUN_C AS FCPLUN, ' +
+       'FCV.PORTWWN_C AS PORTWWN, FCV.NAME_C AS NAME, FCV.GUID_C AS GUID, ARRAYVOL.GUID_C AS ARRAYVOL_GUID ' +
+      'FROM BB_FCVOLUME55_V FCV ' +
+      'JOIN BB_COMPUTERSYSTEM40_V CS ON FCV.PK__PARENTSTORAGEEXTENT_C = CS.PK_C ' +
+      'LEFT OUTER JOIN BB_STORAGEEXTENTJDO_BASEDON_J FC_BO ON FCV.PK_C = FC_BO.PK__JDOID_C ' +
+      'LEFT OUTER JOIN BB_BASEDONEXTENT34_V BO ON BO.PK_C = FC_BO.PK__BASEDON_C ' +
+      'LEFT OUTER JOIN BB_STORAGEVOLUME95_V ARRAYVOL ON BO.TARGET_C = ARRAYVOL.GUID_C')
     fcv_data = fcv_stmt.executeQuery(sql_query)
     volumes = {}
     while fcv_data.next():
       cs_guid = fcv_data.getString('CS_GUID')
-      v = {'deviceid': fcv_data.getString('DEVICEID'), 'FCPLun': fcv_data.getString('FCPLUN'), 'portWWN': fcv_data.getString('PORTWWN'), 'name': fcv_data.getString('NAME'), 'guid': fcv_data.getString('GUID')}
+      v = {'deviceid': fcv_data.getString('DEVICEID'), 'FCPLun': fcv_data.getString('FCPLUN'), 
+           'portWWN': fcv_data.getString('PORTWWN'), 'name': fcv_data.getString('NAME'), 
+           'guid': fcv_data.getString('GUID'), 'arrayvol': fcv_data.getString('ARRAYVOL_GUID')}
       if cs_guid in volumes:
         volumes[cs_guid].append(v)
       else:
@@ -296,7 +304,7 @@ def main():
     fcv_data.close()
     fcv_data = None
     fcv_stmt.close()
-
+    
     LogDebug('ComputerSystems with FC volumes:' + str(len(volumes)))
     
     # cache the SCSIVolumes also in case there are some SCSIVolumes that should be FCVolumes
@@ -353,6 +361,7 @@ def main():
       cs_guid = mo_data.getString('CS_GUID')
       wwn = mo_data.getString('WWN')
       path_guid = mo_data.getString('PATH_GUID')
+      path_arrayvol = mo_data.getString('ARRAYVOL_GUID')
       LogDebug('pathname=' + pathname + ';path_guid=' + path_guid + ';cs_guid=' + cs_guid + ';wwn=' + wwn)
       found = False
       if cs_guid in volumes:
@@ -360,7 +369,8 @@ def main():
         for volume in volumes[cs_guid]:
           # LogDebug('volume=' + str(volume))
           # look for matching WWN and path
-          if volume['portWWN'] == wwn and ( volume['deviceid'] == pathname or volume['name'] == name ):
+          # TODO arrayvol could be null on both? no scipath
+          if ( volume['portWWN'] == wwn or volume['arrayvol'] == path_arrayvol ) and ( volume['deviceid'] == pathname or volume['name'] == name ):
             LogDebug('volume=' + str(volume))
             # loop again and look for volumes with the same FCPLun and matching WWN
             found_match = False
@@ -370,8 +380,8 @@ def main():
                 LogDebug('matching LUN volume=' + str(v))
                 found_match = True
             found = True
-            # if no matching LUN/WWN combo then update the SCSIPath
-            if found_match is False:
+            # if no matching duplicate LUN/WWN combo then update the SCSIPath and volume FCPLun is set (otherwise matching on existing arrayvol)
+            if found_match is False and not volume['FCPLun'] is None:
               sPath = sensorhelper.newModelObject('cdm:dev.SCSIPath')
               sPath.setGuid(Guid(path_guid))
               sPath.setLUN(int(volume['FCPLun']))
@@ -379,24 +389,6 @@ def main():
               paths.append(sPath)
               break
             else:
-              # I thought this script was creating duplicate basedOn relationships after discovery runs
-              # but now I think that it was relationship building code below that was creating the duplicates, which I fixed
-              
-              # api = get_taddm_api()
-              # fcv_data = api.executeQuery('select * from FCVolume where guid == \'' + volume['guid'] + '\'', 2, None, None)
-              # if fcv_data.next():
-                # fcv_ = fcv_data.getModelObject(2)
-                # if fcv_.hasBasedOn():
-                  # for basedOn in fcv_.getBasedOn():
-                    # vsv_ = basedOn.getTarget()
-                    # if str(vsv_.getGuid()) == mo_data.getString('ARRAYVOL_GUID'):
-                      # LogDebug(' basedOn vvol already exists on fcvol')
-                      # fcv_data.close()
-                      # fcv_data = None
-                      # continue
-              # fcv_data.close()
-              # fcv_data = None
-              
               # build relationships here instead of letting topoagent build due to the matching LUN/WWN
               fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
               fcv.setGuid(Guid(volume['guid']))
@@ -411,20 +403,20 @@ def main():
               LogDebug(' Defining FCVolume: ' + str(fcv))
               paths.append(fcv)
               
-              fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
-              fcv.setGuid(Guid(volume['guid']))
-              vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume') # define virtual storage volume
-              vsv.setGuid(Guid(mo_data.getString('ARRAYVOL_GUID')))
-
-              realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-              realizes.setSource(vsv)
-              realizes.setTarget(fcv)
-              realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-              vsv.setRealizedBy(realizes)
-              LogDebug(' Defining StorageVolume: ' + str(vsv))
-              paths.append(vsv)
+              # not messing with RealizesExtent from the other side because it has potential to cause issues
+              #fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
+              #fcv.setGuid(Guid(volume['guid']))
+              #vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume') # define virtual storage volume
+              #vsv.setGuid(Guid(mo_data.getString('ARRAYVOL_GUID')))
+              #realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
+              #realizes.setSource(vsv)
+              #realizes.setTarget(fcv)
+              #realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
+              #vsv.setRealizedBy(realizes)
+              #LogDebug(' Defining StorageVolume: ' + str(vsv))
+              #paths.append(vsv)
               
-              # set scsipath LUN so it won't come up next time
+              # set scsipath Volume so it won't come up next time
               fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
               fcv.setGuid(Guid(volume['guid']))
               sPath = sensorhelper.newModelObject('cdm:dev.SCSIPath')
@@ -440,16 +432,6 @@ def main():
     mo_data.close()
     stmt.close()
     dbConn.close()
-    
-    # LogDebug('Initializing API')
-    # LogDebug("Creating TADDM API Connection")
-    # if host is "localhost":
-      # conn = ApiFactory.getInstance().getApiConnection(-1,None,0)
-    # else:
-      # conn = ApiFactory.getInstance().getApiConnection(host,-1,None,0)
-    # sess = ApiFactory.getInstance().getSession(conn, userid, password, ApiSession.DEFAULT_VERSION)
-    # api = sess.createCMDBApi()
-    # LogDebug("TADDM API Connection CREATED")
     
     num_threads = 10
     global output
@@ -473,6 +455,8 @@ def main():
   except Exception, desc:
       print "General error: " 
       print desc
+      (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+      traceback.print_exc(ErrorTB)
   
   sys.exit(0)
 
