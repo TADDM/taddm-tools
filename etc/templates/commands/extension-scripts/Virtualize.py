@@ -53,13 +53,6 @@ import traceback
 ########################################################
 import sensorhelper
 
-########################################################
-# Some default GLOBAL Values (Typically these should be in ALL CAPS)
-# Jython does not have booleans
-########################################################
-True = 1
-False = 0
-
 ######################################################## 
 # LogError Error Logging 
 ########################################################
@@ -85,5 +78,10 @@ if not (computersystem.hasVirtual() and computersystem.getVirtual()) and compute
 if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform') and not computersystem.hasManufacturer():
     log.debug("Setting manufacturer to VMware, Inc.")
     computersystem.setManufacturer('VMware, Inc.')
+    
+if computersystem.hasUUID() and not computersystem.hasSystemBoardUUID():
+    uuid = computersystem.getUUID().lower()
+    log.debug('Setting systemBoardUUID to ' + uuid)
+    computersystem.setSystemBoardUUID(uuid)
     
 log.info("Virtualize discovery extension ended.")
