@@ -20,6 +20,31 @@
 ############################# End Standard Header ##############################
 
 ########################################################
+# USE FOLLOWING TO IMPORT HELPER IN YOUR SENSOR CODE
+########################################################
+## add extension-scripts to sys.path if not already there
+#ext_path = coll_home + '/etc/templates/commands/extension-scripts'
+#if ext_path not in sys.path:
+#  sys.path.append(ext_path)
+
+#import os
+## when AnchorSensor copies compiled file *$py.class the $py is removed and this causes
+## runtime errors on the remote anchor, so rename any *.class to *$py.class
+#for root, dirs, files in os.walk(ext_path):
+#  for filename in files:
+#    if filename.endswith('.class') and not filename.endswith('$py.class'):
+#      basename = filename.split('.')[0]
+#      try:
+#        os.rename(ext_path + '/' + filename, ext_path + '/' + basename + '$py.class')
+#      except:
+#        print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
+#        pass
+
+## now import from extension-scripts
+#import helper
+
+
+########################################################
 # Standard Jython/Python Library Imports
 ########################################################
 import sys
@@ -47,7 +72,12 @@ import sensorhelper
 
 # Import the TADDM Java Libraries
 from com.collation.platform.model.util.ea import ExtendedAttributesData
- 
+
+def get_class_name(model_object):
+  cn = model_object.__class__.__name__
+  real_class_name=cn.replace("Impl","")
+  return real_class_name
+  
 ########################
 # setExtendedAttributes Takes a CDM ModelObject and a python dictionary of name
 #                       value pairs and sets the name value pairs as
