@@ -36,18 +36,34 @@ from com.collation.platform.model.util.openid import OpenId
 ########################################################
 coll_home = System.getProperty("com.collation.home")
 
-# this is for default (old) Python v2.1
-#System.setProperty("jython.home",coll_home + "/external/jython-2.1")
-#System.setProperty("python.home",coll_home + "/external/jython-2.1")
-
 # this is for new Python v2.5.3
 System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
 System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
 
 jython_home = System.getProperty("jython.home")
-sys.path.append(jython_home + "/Lib")
-sys.path.append(coll_home + "/lib/sensor-tools")
 sys.prefix = jython_home + "/Lib"
+
+# add extension-scripts to sys.path if not already there
+ext_path = coll_home + '/etc/templates/commands/extension-scripts'
+if ext_path not in sys.path:
+  sys.path.append(ext_path)
+
+import os
+# when AnchorSensor copies compiled file *$py.class the $py is removed and this causes
+# runtime errors on the remote anchor, so rename any *.class to *$py.class
+for root, dirs, files in os.walk(ext_path):
+  for filename in files:
+    if filename.endswith('.class') and not filename.endswith('$py.class'):
+      basename = filename.split('.')[0]
+      try:
+        os.rename(ext_path + '/' + filename, ext_path + '/' + basename + '$py.class')
+      except:
+        print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
+        pass
+
+# now import from extension-scripts
+import helper
+from sudo import Validator
 
 ########################################################
 # More Standard Jython/Python Library Imports
@@ -142,13 +158,14 @@ try:
     if re.search('.*EMC.*', output):
       rdm_volumes = []
       try:
-        # check if sudo is configured for sg_inq first, this way we won't trigger
+        # check if sg_inq installed
+        if helper.validateCommand('sg_inq') is False:
+          raise Exception()
+        
+        # check if sudo is configured for sg_inq, this way we won't trigger
         # a sudo alert if we run it and it fails
-        sudo_list = sensorhelper.executeCommand('sudo -l')
-        if sudo_list:
-          if not re.search('.*sg_inq.*', sudo_list):
-            raise Exception() # don't attempt sudo sg_inq
-        else:
+        sudo = Validator()
+        if sudo.validateSudo('sg_inq') is False:
           raise Exception() # don't attempt sudo sg_inq
         
         # use sudo sg_inq -i <device>

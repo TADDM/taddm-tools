@@ -131,3 +131,26 @@ def validateCommand(cmd):
   except:
     print 'command not found'
     return False
+    
+########################
+# does_exist  Runs ls on target to see if file exists
+#
+#                       Parameters
+#                               file  file to check
+#
+#                       Returns
+#                               True if file exists
+#                               False if file does not exist
+#
+#                       Exceptions
+#                               
+########################
+def does_exist(file):
+  try:
+    print 'checking for accessible file = ' + file
+    out = sensorhelper.executeCommand('ls ' + file + ' 2>/dev/null')
+    print 'file found = ' + out
+    return True
+  except:
+    print 'file not found'
+    return False
