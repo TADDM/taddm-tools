@@ -24,6 +24,7 @@
 import sys
 import java
 import os
+import re
 from decimal import Decimal
 
 ########################################################
@@ -94,42 +95,54 @@ def main():
 
     log.info("EMC INQ discovery extension started (written by Mat Davis - mdavis5@us.ibm.com).")
     
-    is_vm = False
-    if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform'):
-      is_vm = True
-    else:
-      log.info('Target is not VMware VM, skipping EMC INQ')
-      log.info("EMC INQ discovery extension ended.")
-      return
+    os_type = helper.get_os_type(os_handle)
+    
+    is_vmware = helper.is_vmware(computersystem)
+    
+    # is_vm = False
+    # if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform'):
+      # is_vm = True
+    # else:
+      # log.info('Target is not VMware VM, skipping EMC INQ')
+      # log.info("EMC INQ discovery extension ended.")
+      # return
 
-    try:
-      output = sensorhelper.executeCommand('lsscsi')
-      # check if there are any EMC Invista disks
-      if re.search('.*EMC.*', output) is None:
-        log.info('lsscsi did not detect any EMC disks to discover')
-        log.info("EMC INQ discovery extension ended.")
-        return
-    except:
-      log.info('lsscsi not found on server, halting execution')
-      log.info("EMC INQ discovery extension ended.")
-      return
+    # try:
+      # output = sensorhelper.executeCommand('lsscsi')
+      # # check if there are any EMC Invista disks
+      # if re.search('.*EMC.*', output) is None:
+        # log.info('lsscsi did not detect any EMC disks to discover')
+        # log.info("EMC INQ discovery extension ended.")
+        # return
+    # except:
+      # log.info('lsscsi not found on server, halting execution')
+      # log.info("EMC INQ discovery extension ended.")
+      # return
 
     # INQ is needed only if sg_inq not installed and lsscsi version < 0.26
     # check if sg_inq installed
-    if helper.validateCommand('sg_inq'):
-      log.info('sg_inq is installed, do not need EMC INQ')
-      log.info("EMC INQ discovery extension ended.")
-      return
-    else:
-      # check if lsscsi version > 0.25
-      version = sensorhelper.executeCommand('lsscsi -V 2>&1')
-      if version and Decimal(version.split()[1]) > Decimal('0.25'):
-        log.info('lsscsi is at version 0.26+, do not need EMC INQ')
-        log.info("EMC INQ discovery extension ended.")
-        return
+    # if helper.validateCommand('sg_inq'):
+      # log.info('sg_inq is installed, do not need EMC INQ')
+      # log.info("EMC INQ discovery extension ended.")
+      # return
+    # else:
+      # # check if lsscsi version > 0.25
+      # version = sensorhelper.executeCommand('lsscsi -V 2>&1')
+      # if version and Decimal(version.split()[1]) > Decimal('0.25'):
+        # log.info('lsscsi is at version 0.26+, do not need EMC INQ')
+        # log.info("EMC INQ discovery extension ended.")
+        # return
     
     # EMC inquiry tool can be downloaded from ftp://ftp.emc.com/pub/symm3000/inquiry/
-    inq = 'inq.LinuxAMD64'
+    if os_type == 'Linux':
+      inq = 'inq.LinuxAMD64'
+    elif os_type == 'Sun':
+      inq = 'inq.sol64'
+    else:
+      log.info('Unknown OS type')
+      log.info("EMC INQ discovery extension ended.")
+      return
+
     remotePath = '/usr/local/bin/'
     
     # check if INQ installed in /usr/local/bin/inq
@@ -145,18 +158,19 @@ def main():
       sensorhelper.executeCommand('chmod +x ' + pwd + inq) # grant execute permission
       
       log.info(inq + ' not installed under ' + remotePath + ', binary was staged in ' + pwd)
-      log.info("EMC INQ discovery extension ended.")
-      return
+      remotePath = pwd
+      # log.info("EMC INQ discovery extension ended.")
+      # return
   
     # check if command in sudo
     cmd = remotePath + inq
     sudo = Validator()
     if not sudo.validateSudo(cmd):
       log.info(cmd + ' not found in sudoers')
-      log.info("EMC INQ discovery extension ended.")
-      return
-    
-    cmd = 'sudo ' + remotePath + inq
+      # log.info("EMC INQ discovery extension ended.")
+      # return
+    else:
+      cmd = 'sudo ' + remotePath + inq
     
     # get any previously discovered volumes
     vols = {}
@@ -173,18 +187,27 @@ def main():
         log.debug('Found existing SCSIVolume:' + str(ext_result))
         
     try:
-      output = sensorhelper.executeCommand(cmd + ' -no_dots -vplex_wwn')
+      # output = sensorhelper.executeCommand(cmd + ' -no_dots -vplex_wwn')
+      output = sensorhelper.executeCommand(cmd + ' -no_dots -wwn')
       
       for line in output.splitlines():
         # if line starts with /dev/ then we use this disk
-        if line.startswith('/dev/'):
-          s = line.split()
-          if len(s) == 5:
-            device = s[0]
+        if (os_type == 'Linux' and line.startswith('/dev/')) or (os_type == 'Sun' and line.startswith('/dev/rdsk/')):
+          s = line.split(':')
+          if len(s) == 4:
+            device = s[0].strip()
             name = device.split('/')[-1]
-            uuid = s[4]
+            if os_type == 'Sun':
+              name = name[:-2] # remove s2 from the end
+            vendor = s[1].strip()
+            prod = s[2].strip() # VRAID and RAID 5 products found on Solaris
+            uuid = s[3]
             # make sure wwn is in format of a VPLEX UUID
-            if len(uuid) == 32:
+            # if len(uuid) == 32:
+            # make sure wwn is in format of a UUID and proper type
+            if len(uuid) == 32 and ( prod == 'VPLEX' or ( vendor == 'DGC' and 'RAID' in prod ) ):
+              log.info('Found LUN: ' + line)
+            
               uuid = uuid.upper()
               vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
               # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
@@ -197,7 +220,7 @@ def main():
               else:
                 cdm_type = 'cdm:dev.FCVolume'
                 # create SCSIVolume if RDM instead of FCVolume
-                if is_vm:
+                if is_vmware:
                   cdm_type = 'cdm:dev.SCSIVolume'
                 vol = sensorhelper.newModelObject(cdm_type)
                 vol.setParent(computersystem)
@@ -212,7 +235,7 @@ def main():
 
             else:
               #result.warning('line parse unexpected:' + uuid)
-              log.warning('UUID not 32 hex number:' + uuid)
+              log.info('Skipping line:' + line)
           else:
             #result.warning('line parse unexpected:' + line)
             log.warning('line parse unexpected:' + line)

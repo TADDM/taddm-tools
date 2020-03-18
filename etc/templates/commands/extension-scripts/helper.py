@@ -49,6 +49,7 @@
 ########################################################
 import sys
 import java
+import re
 
 ########################################################
 # Additional from Java imports
@@ -78,6 +79,26 @@ def get_class_name(model_object):
   real_class_name=cn.replace("Impl","")
   return real_class_name
   
+# copied from ext_attr_helper because of CNF error while running on anchor
+def get_os_type(os_handle):
+  '''
+  Return OS we are on --> UNIX or WINDOWS
+  '''
+  cs = sensorhelper.getComputerSystem(os_handle)
+  class_name = get_class_name(cs)
+  print "OS Classname is:  " + str(class_name)
+  if re.search("Linux",class_name,re.I):
+    os_type = "Linux"
+  elif re.search("Windows",class_name,re.I):
+    os_type = "Windows"
+  elif re.search("AIX",class_name,re.I):
+    os_type = "Aix"
+  elif re.search("Sun",class_name,re.I):
+    os_type = "Sun"
+  else:
+    os_type = "UNKNOWN"
+  return os_type
+
 ########################
 # setExtendedAttributes Takes a CDM ModelObject and a python dictionary of name
 #                       value pairs and sets the name value pairs as
@@ -154,3 +175,37 @@ def does_exist(file):
   except:
     print 'file not found'
     return False
+
+########################
+# is_vmware  Check if computersystem is vmware
+#
+#                       Parameters
+#                               computersystem  discovered computersystem
+#
+#                       Returns
+#                               True if vmware
+#                               False if not vmware
+#
+#                       Exceptions
+#                               
+########################
+def is_vmware(computersystem):
+  is_vmware = False
+  if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform'):
+    is_vmware = True
+  return is_vmware
+
+def is_virtual(computersystem):
+  is_virtual = True # assume virtual
+  if computersystem.hasModel() and not 'virtual' in computersystem.getModel().lower():
+    # model is set and does not contain 'virtual'
+    if computersystem.hasVirtual():
+      if not computersystem.getVirtual():
+        is_virtual = False # virtual is set to False
+    else:
+      # virtual is not set and model does not contain 'virtual'
+      is_virtual = False
+
+  print 'Is server virtual? ' + str(is_virtual)
+  
+  return is_virtual

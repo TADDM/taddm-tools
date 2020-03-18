@@ -23,6 +23,7 @@
 ########################################################
 import sys
 import java
+import os
 
 ########################################################
 # Additional from Java imports
@@ -41,13 +42,27 @@ System.setProperty("jython.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jyt
 System.setProperty("python.home",coll_home + "/osgi/plugins/com.ibm.cdb.core.jython_1.0.0/lib")
 
 jython_home = System.getProperty("jython.home")
-sys.path.append(jython_home + "/Lib")
 sys.prefix = jython_home + "/Lib"
 
-# add sensor-tools to sys.path if not already there
-ext_path = coll_home + '/lib/sensor-tools'
-if ext_path not in sys.path:
-  sys.path.append(ext_path)
+ext_paths = [ jython_home + '/Lib', coll_home + '/lib/sensor-tools', coll_home + '/etc/templates/commands/extension-scripts' ]
+for ext_path in ext_paths:
+  # add to sys.path if not already there
+  if ext_path not in sys.path:
+    sys.path.append(ext_path)
+
+  # when AnchorSensor copies compiled file *$py.class the $py is removed and this causes
+  # runtime errors on the remote anchor, so rename any *.class to *$py.class
+  for root, dirs, files in os.walk(ext_path):
+    for filename in files:
+      if filename.endswith('.class') and not filename.endswith('$py.class'):
+        basename = filename.split('.')[0]
+        try:
+          os.rename(ext_path + '/' + filename, ext_path + '/' + basename + '$py.class')
+        except:
+          print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
+          pass
+        
+from sudo import Validator
 
 ########################################################
 # More Standard Jython/Python Library Imports
@@ -74,7 +89,6 @@ class CommandNotFoundError(Exception):
   def __str__(self):
     return repr(self.value)
 
-# run fcinfo command
 def fcinfo():
   fc_vols = {}
   
@@ -118,6 +132,10 @@ def fcinfo():
         for line in rport_output.splitlines():
           if re.search('LUN: [0-9]+', line):
             lun = line.split()[-1]
+          elif re.search('Vendor: ', line):
+            vendor = line.split()[-1]
+          elif re.search('Product: ', line):
+            product = line.split()[-1]
           elif re.search('OS Device Name: ', line):
             dev_name = line.split()[-1]
             if dev_name.startswith('/dev/rmt/'):
@@ -143,25 +161,29 @@ def fcinfo():
             fc_vols[name] = fcv
   return fc_vols
 
-# use EMC inq to discover VPLEX remote UUID
+# use EMC inq to discover VPLEX or CLARiiON remote UUID
 def emc_inq(remotePath, fc_vols):
   
   try:
-    output = sensorhelper.executeCommand(remotePath + ' -no_dots -vplex_wwn')
+    output = sensorhelper.executeCommand(remotePath + ' -no_dots -wwn')
   except:
     log.info(remotePath + ' command failed, halting execution of disk discovery.')
     return fc_vols
   
   for line in output.splitlines():
     # TODO look for other valid startswith lines if they exist
+    # found /dev/vx/rdmp/ on gar-jamis
     if line.startswith('/dev/rdsk/'):
-      s = line.split()
-      if len(s) == 5:
-        device = s[0]
+      s = line.split(':')
+      if len(s) == 4:
+        device = s[0].strip()
         name = device.split('/')[-1][:-2] # remove s2 from the end
-        uuid = s[4]
-        # make sure wwn is in format of a VPLEX UUID
-        if len(uuid) == 32:
+        vendor = s[1].strip()
+        prod = s[2].strip() # VRAID and RAID 5 products found
+        uuid = s[3]
+        # make sure wwn is in format of a UUID and proper type
+        if len(uuid) == 32 and ( prod == 'VPLEX' or ( vendor == 'DGC' and 'RAID' in prod ) ):
+          log.info('Found LUN: ' + line)
           uuid = uuid.upper()
           vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
           # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
@@ -183,7 +205,7 @@ def emc_inq(remotePath, fc_vols):
 
         else:
           #result.warning('line parse unexpected:' + uuid)
-          log.warning('UUID not 32 hex number:' + uuid)
+          log.info('Skipping line:' + line)
       else:
         #result.warning('line parse unexpected:' + line)
         log.warning('line parse unexpected:' + line)
@@ -237,8 +259,13 @@ def main():
       remotePath = remotePath + inq
       os_handle.copyToRemote(path, remotePath)
       sensorhelper.executeCommand('chmod +x ' + remotePath) # grant execute permission
+      # check if command in sudo
+      sudo = Validator()
+      if sudo.validateSudo(remotePath):
+        log.info(remotePath + ' found in sudoers, using sudo for command')
+        remotePath = 'sudo ' + remotePath
     
-      fc_vols = emc_inq(remotePath, fc_vols)
+      #fc_vols = emc_inq(remotePath, fc_vols)
     else:
       log.info('Virtual server detected, skipping EMC INQ discovery')      
     
