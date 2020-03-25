@@ -16,7 +16,7 @@ EMAIL=
 # SA organizations
 for org in `ls scopes/sudo_*invalid_*.scope | awk -F_ '{print $NF}' | awk -F\. '{print $1}' | sort | uniq`
 do
-  scopes=( "sudo" "sudo_lsof" "sudo_dmidecode" "sudo_hba" "sudo_hba_path" "sudo_rdm" )
+  scopes=( "sudo" "sudo_lsof" "sudo_dmidecode" "sudo_hba" "sudo_hba_path" "sudo_rdm" "sudo_emc" )
   attachments=""
   for scope in "${scopes[@]}"
   do

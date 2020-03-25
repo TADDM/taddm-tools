@@ -15,3 +15,5 @@ rm -f scopes/*.scope 2>/dev/null
 ./sudoscopes.sh
 ./splitsudo.sh
 ./sendsudo.sh
+./session_errors.sh
+./sendsession.sh

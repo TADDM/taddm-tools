@@ -20,7 +20,7 @@ COMMONPART="$BINDIR/common.sh"
 # cleanup and previous scopes
 rm -f scopes/sudo_*invalid_*.scope 2>/dev/null
 
-scopes=( "sudo" "sudo_lsof" "sudo_dmidecode" "sudo_hba" "sudo_hba_path" "sudo_rdm" )
+scopes=( "sudo" "sudo_lsof" "sudo_dmidecode" "sudo_hba" "sudo_hba_path" "sudo_rdm" "sudo_emc" )
 for scope in "${scopes[@]}"
 do
   if [ `wc -l scopes/${scope}_invalid.scope|awk '{print $1}'` -gt 1 ]; then

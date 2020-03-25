@@ -35,3 +35,9 @@ echo "# sudo_hba_path_invalid" > scopes/sudo_hba_path_invalid.scope
 
 echo "# sudo_rdm_invalid" > scopes/sudo_rdm_invalid.scope
 ./buildscope.jy -P -q "select * from LinuxUnitaryComputerSystem where XA eval '/xml[attribute[@name=\"sudo_rdm\"]=\"invalid\"]' and not XA eval '/xml[attribute[@name=\"decom\"]]' and lastModifiedTime > $epoch" >> scopes/sudo_rdm_invalid.scope
+
+echo "# sudo_emc_invalid" > scopes/sudo_emc_invalid.scope
+./buildscope.jy -P -q "select * from ComputerSystem where XA eval '/xml[attribute[@name=\"sudo_emc\"]=\"invalid\"]' and not XA eval '/xml[attribute[@name=\"decom\"]]' and lastModifiedTime > $epoch" >> scopes/sudo_emc_invalid.scope
+
+echo "# sudo_emc_unexpected" > scopes/sudo_emc_unexpected.scope
+./buildscope.jy -P -q "select * from ComputerSystem where XA eval '/xml[attribute[@name=\"sudo_emc\"]=\"unexpected\"]' and lastModifiedTime > $epoch" >> scopes/sudo_emc_unexpected.scope
