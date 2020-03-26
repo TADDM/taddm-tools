@@ -94,7 +94,7 @@ def fcinfo():
   
   # check if sudo is configured for fcinfo first, this way we won't trigger
   # a sudo alert if we run it and it fails
-  sudo_list = sensorhelper.executeCommand('sudo -l')
+  sudo_list = sensorhelper.executeCommandWithTimeout('sudo -l', 30*1000)
   if sudo_list:
     if not re.search('.*fcinfo.*', sudo_list):
       log.info('fcinfo not in sudo') # don't attempt sudo fcinfo

@@ -123,7 +123,7 @@ class Validator():
     try:
       if cmd:
         if self.sudo_list is None:
-          self.sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
+          self.sudo_list = sensorhelper.executeCommandWithTimeout('sudo -l 2>/dev/null', 30*1000)
         # look for line containing (root) NOPASSWD: .*cmd.*
         regex = re.compile('\(((root)|(ALL))\) NOPASSWD: .*' + cmd + '.*', re.MULTILINE | re.DOTALL)
         if regex.search(self.sudo_list):
@@ -132,7 +132,7 @@ class Validator():
           return False
       else:
         try:
-          self.sudo_list = sensorhelper.executeCommand('sudo -l 2>&1')
+          self.sudo_list = sensorhelper.executeCommandWithTimeout('sudo -l 2>&1', 30*1000)
           return True
         except:
           return False
@@ -143,7 +143,10 @@ class Validator():
   def commandPath(self, cmd):
     paths = []
     if self.sudo_list is None:
-      self.sudo_list = sensorhelper.executeCommand('sudo -l 2>/dev/null')
+      try:
+        self.sudo_list = sensorhelper.executeCommandWithTimeout('sudo -l 2>/dev/null', 30*1000)
+      except:
+        pass
     for s in self.sudo_list.split():
       if cmd in s:
         paths.append(s.replace(',', ''))
