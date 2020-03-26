@@ -1,3 +1,4 @@
+#!/usr/bin/env ../../../../bin/jython_coll_253
 
 ############### Begin Standard Header - Do not add comments here ##
 # Licensed Materials - Property of IBM
@@ -138,6 +139,9 @@ def main():
       inq = 'inq.LinuxAMD64'
     elif os_type == 'Sun':
       inq = 'inq.sol64'
+      if computersystem.hasArchitecture():
+        if computersystem.getArchitecture() == 'i86pc':
+          inq = 'inq.solarisx86_64'
     else:
       log.info('Unknown OS type')
       log.info("EMC INQ discovery extension ended.")
@@ -165,11 +169,9 @@ def main():
     # check if command in sudo
     cmd = remotePath + inq
     sudo = Validator()
-    if not sudo.validateSudo(cmd):
-      log.info(cmd + ' not found in sudoers')
-      # log.info("EMC INQ discovery extension ended.")
-      # return
-    else:
+    cmd_sudo = sudo.validateSudo(cmd)
+    log.info('command in sudo?: ' + str(cmd_sudo))
+    if cmd_sudo:
       cmd = 'sudo ' + remotePath + inq
     
     # get any previously discovered volumes
@@ -239,12 +241,46 @@ def main():
           else:
             #result.warning('line parse unexpected:' + line)
             log.warning('line parse unexpected:' + line)
+      
+      if line:
+        log.info('last line: ' + line)
+      else:
+        log.info('last line is empty')
+
+      xa = {}
+      xa['sudo_emc'] = ''
+      # check if last line is separator line (no output)
+      if '-----' in line:
+        log.info('sudo_emc: no output from command')
+        if cmd_sudo:
+          log.info('sudo_emc: sudo used')
+          xa['sudo_emc'] = 'unexpected'
+          # unexpected, if sudo is used it should produce output
+        else:
+          log.info('sudo_emc: no sudo used')
+          # if physical Sun host, need sudo for command
+          if os_type == 'Sun' and not helper.is_virtual(computersystem):
+            # for ALL physical Sun hosts we want to run the EMC INQ tool
+            log.info('sudo_emc: physical Sun')
+            xa['sudo_emc'] = 'invalid'
+      else:
+        log.info('sudo_emc: output produced')
+        if cmd_sudo:
+          log.info('sudo_emc: sudo used')
+          xa['sudo_emc'] = 'valid'
+        else:
+          log.info('sudo_emc: no sudo used')
+          # nothing to do
+          
+      helper.setExtendedAttributes(computersystem, xa)
+      
     except:
       log.info(remotePath + ' command failed, halting execution of disk discovery.')
       (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
       errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
       LogError(errMsg)
       result.warning(errMsg)
+      helper.setExtendedAttributes(computersystem, {'sudo_emc':'unexpected'})
     
     log.info("EMC INQ discovery extension ended.")
   except:
@@ -254,4 +290,57 @@ def main():
     result.warning(errMsg)
 
 if __name__ == "__main__":
-  main()
+
+  create_ea = True
+  try:
+    # if this throws an error that we are local and creating EA
+    sensorhelper.init(targets)
+    create_ea = False
+  except:
+    pass
+    
+  if create_ea:
+    import getopt
+    try:
+      opts, args = getopt.getopt(sys.argv[1:], 'u:p:', ['help'] )
+    except getopt.GetoptError, err:
+      # print help information and exit:
+      print str(err) # will print something like "option -a not recognized"
+      usage()
+      sys.exit(2)
+
+    userid = None
+    password = None
+    for o, a in opts:
+      if o == "-u":
+        userid = a
+      elif o == "-p":
+        password = a
+      elif o in ("-h", "--help"):
+        usage()
+        sys.exit()
+
+    import ext_attr_helper as ea
+    # Import TADDM Pros library
+    from com.collation.platform.util import Props
+
+    #------------------------------------------------
+    # Set Defaults...
+    #------------------------------------------------
+    if userid is None:
+      userid = "administrator"
+
+    if password is None:
+      password = "collation"
+    #
+    # Initialize
+    #
+    api = ea.get_taddm_api(Props.getRmiBindHostname(), userid, password)
+    attr_names = [ 'sudo_emc' ]
+    for attr_name in attr_names:
+      print 'Creating ' + attr_name + ' String EA on UnitaryComputerSystem'
+      created = ea.createExtendedAttributes(api, attr_name, 'String', 'com.collation.platform.model.topology.sys.UnitaryComputerSystem')
+      print ' Success: ' + str(created)
+    api.close()
+  else:
+    main() # run sensor
