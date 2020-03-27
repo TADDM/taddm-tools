@@ -142,6 +142,14 @@ def main():
       if computersystem.hasArchitecture():
         if computersystem.getArchitecture() == 'i86pc':
           inq = 'inq.solarisx86_64'
+      else:
+        # if arch command failed during computersystem discovery
+        try:
+          arch = sensorhelper.executeCommand('uname -m')
+          if 'i86pc' in arch:
+            inq = 'inq.solarisx86_64'
+        except:
+          log.info('uname command failed, using inq.sol64 as default command')
     else:
       log.info('Unknown OS type')
       log.info("EMC INQ discovery extension ended.")
