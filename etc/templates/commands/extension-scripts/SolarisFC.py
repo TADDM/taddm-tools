@@ -102,7 +102,11 @@ def fcinfo():
   else:
     log.info('fcinfo not in sudo') # don't attempt sudo fcinfo
     return fc_vols
-    
+  
+  if not helper.file_exists('/usr/sbin/fcinfo'):
+    log.info('/usr/sbin/fcinfo does not exist')
+    return fc_vols
+
   try:
     output = sensorhelper.executeCommand('sudo /usr/sbin/fcinfo hba-port')
   except:
