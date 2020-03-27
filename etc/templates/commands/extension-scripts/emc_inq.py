@@ -149,7 +149,7 @@ def main():
 
     remotePath = '/usr/local/bin/'
     
-    # check if INQ installed in /usr/local/bin/inq
+    # check if INQ installed in /usr/local/bin/
     if not helper.does_exist(remotePath + inq):
       # copy inq to targets
       lpath = coll_home + "/etc/templates/commands/extension-scripts/" + inq
@@ -275,12 +275,17 @@ def main():
       helper.setExtendedAttributes(computersystem, xa)
       
     except:
-      log.info(remotePath + ' command failed, halting execution of disk discovery.')
-      (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
-      errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
-      LogError(errMsg)
-      result.warning(errMsg)
-      helper.setExtendedAttributes(computersystem, {'sudo_emc':'unexpected'})
+      if helper.is_exec(cmd):
+        log.info(cmd + ' command failed, halting execution of disk discovery.')
+        (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
+        errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
+        LogError(errMsg)
+        result.warning(errMsg)
+        helper.setExtendedAttributes(computersystem, {'sudo_emc':'unexpected'})
+      else:
+        # if command is not executable then we need sudo
+        log.info(cmd + ' command is not executable')
+        helper.setExtendedAttributes(computersystem, {'sudo_emc':'invalid'})
     
     log.info("EMC INQ discovery extension ended.")
   except:

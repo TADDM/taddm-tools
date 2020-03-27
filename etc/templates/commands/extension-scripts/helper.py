@@ -177,6 +177,29 @@ def does_exist(file):
     return False
 
 ########################
+# is_exec  Runs test on target to see if file executable
+#
+#                       Parameters
+#                               file  file to check
+#
+#                       Returns
+#                               True if file executable
+#                               False if file not executable
+#
+#                       Exceptions
+#                               
+########################
+def is_exec(file):
+  try:
+    print 'checking for executable file = ' + file
+    sensorhelper.executeCommand('test -x ' + file + ' 2>/dev/null')
+    print 'file executable'
+    return True
+  except:
+    print 'file not executable'
+    return False
+
+########################
 # is_vmware  Check if computersystem is vmware
 #
 #                       Parameters
