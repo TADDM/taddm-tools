@@ -137,6 +137,17 @@ def main():
     # EMC inquiry tool can be downloaded from ftp://ftp.emc.com/pub/symm3000/inquiry/
     if os_type == 'Linux':
       inq = 'inq.LinuxAMD64'
+      if computersystem.hasArchitecture():
+        if computersystem.getArchitecture() == 'i686':
+          inq = 'inq.linux'
+      else:
+        # if arch command failed during computersystem discovery
+        try:
+          arch = sensorhelper.executeCommand('uname -m')
+          if 'i686' in arch:
+            inq = 'inq.linux'
+        except:
+          log.info('uname command failed, using ' + inq + ' as default command')
     elif os_type == 'Sun':
       inq = 'inq.sol64'
       if computersystem.hasArchitecture():
@@ -149,7 +160,7 @@ def main():
           if 'i86pc' in arch:
             inq = 'inq.solarisx86_64'
         except:
-          log.info('uname command failed, using inq.sol64 as default command')
+          log.info('uname command failed, using ' + inq + ' as default command')
     else:
       log.info('Unknown OS type')
       log.info("EMC INQ discovery extension ended.")
