@@ -140,12 +140,16 @@ def main():
       if computersystem.hasArchitecture():
         if computersystem.getArchitecture() == 'i686':
           inq = 'inq.linux'
+        elif computersystem.getArchitecture() == 'ia64':
+          inq = 'inq.LinuxIA64'
       else:
         # if arch command failed during computersystem discovery
         try:
           arch = sensorhelper.executeCommand('uname -m')
           if 'i686' in arch:
             inq = 'inq.linux'
+          elif 'ia64' in arch:
+            inq = 'inq.LinuxIA64'
         except:
           log.info('uname command failed, using ' + inq + ' as default command')
     elif os_type == 'Sun':
