@@ -127,7 +127,7 @@ dup_msg = '''\
 The following scope elements were found multiple times by IP address. These 
 duplicates need to be resolved. Ensure the following are true:
 
-   1) The serial number is being successfully discovered via sudo using dmidecode
+   1) The serial number is being successfully discovered
    2) The older duplicates are deleted from TADDM
 '''
 
