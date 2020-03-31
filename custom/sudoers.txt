@@ -1,0 +1,108 @@
+# The NOPASSWD is required because the entry is used solely
+# for automation purposes. No user at the keyboard.
+
+User_Alias IBM_TADDM_DISC_AIX_BAU = %tadmadm  
+User_Alias IBM_TADDM_DISC_LIN_BAU = %tadmadm
+User_Alias IBM_TADDM_DISC_SOL_BAU = %tadmadm
+User_Alias IBM_TADDM_DISC_HPU_BAU = %tadmadm
+
+Host_Alias TADMMD_HOSTS = ALL 
+
+# AIX
+
+# TADDM
+Defaults:IBM_TADDM_DISC_AIX_BAU !requiretty
+Cmnd_Alias IBM_TADDMD_BAU_AIX_CMDS=\
+/usr/sbin/lswpar\
+/usr/bin/entstat\
+/bin/ls\
+/usr/bin/cksum\
+/usr/bin/dd\
+/usr/sbin/lsof\
+/usr/bin/cat\
+/usr/local/bin/collectionengine-aix-powerpc\
+/usr/local/bin/collectionengine-aix-powerpc_64\
+/usr/local/bin/inq.aix64_51
+
+IBM_TADDM_DISC_AIX_BAU TADMMD_HOSTS = NOPASSWD:IBM_TADDMD_BAU_AIX_CMDS
+
+# Linux
+
+# TADDM
+Defaults:IBM_TADDM_DISC_LIN_BAU !requiretty
+Cmnd_Alias IBM_TADDMD_BAU_LIN_CMDS=\
+/usr/sbin/pvdisplay\
+/usr/sbin/lvdisplay\
+/usr/sbin/vgdisplay\
+/usr/sbin/dmidecode\
+/sbin/mii-tool\
+/usr/sbin/ethtool\
+/bin/ls\
+/usr/bin/cksum\
+/usr/bin/dd\
+/usr/sbin/lsof\
+/usr/bin/cat\
+/sbin/vmcp\
+/opt/VRTSvcs/bin/hastatus\
+/opt/VRTSvcs/bin/haclus\
+/opt/VRTSvcs/bin/hasys\
+/opt/VRTSvcs/bin/hares\
+/opt/VRTSvcs/bin/hagrp\
+/opt/VRTSvcs/bin/hatype\
+/opt/VRTSvcs/bin/hauser\
+/usr/local/bin/collectionengine-linux-x86\
+/usr/local/bin/collectionengine-linux-x86_64\
+/usr/local/bin/inq.LinuxAMD64\
+/usr/local/bin/inq.linux\
+/usr/local/bin/inq.LinuxIA64\
+/usr/bin/sg_inq\
+/sbin/powermt display dev=all
+
+IBM_TADDM_DISC_LIN_BAU TADMMD_HOSTS = NOPASSWD:IBM_TADDMD_BAU_LIN_CMDS
+
+# Solaris
+
+# TADDM
+Defaults:IBM_TADDM_DISC_SOL_BAU !requiretty
+Cmnd_Alias IBM_TADDMD_BAU_SOL_CMDS=\
+/usr/sbin/lpfc/lputil\
+/usr/sbin/ndd\
+/usr/bin/adb\
+/bin/ls\
+/usr/bin/cksum\
+/usr/bin/dd\
+/usr/sbin/lsof\
+/usr/bin/cat\
+/opt/VRTSvcs/bin/hastatus\
+/opt/VRTSvcs/bin/haclus\
+/opt/VRTSvcs/bin/hasys\
+/opt/VRTSvcs/bin/hares\
+/opt/VRTSvcs/bin/hagrp\
+/opt/VRTSvcs/bin/hatype\
+/opt/VRTSvcs/bin/hauser\
+/usr/local/bin/collectionengine-solaris-sparc\
+/usr/local/bin/inq.sol64\
+/usr/local/bin/inq.solarisx86_64\
+/etc/powermt display dev\=all
+
+IBM_TADDM_DISC_SOL_BAU TADMMD_HOSTS = NOPASSWD:IBM_TADDMD_BAU_SOL_CMDS
+
+# HP-UX
+
+# TADDM
+Defaults:IBM_TADDM_DISC_HPU_BAU !requiretty
+Cmnd_Alias IBM_TADDMD_BAU_HPU_CMDS=\
+/usr/sbin/kmadmin\
+/usr/bin/adb\
+/usr/contrib/bin/machinfo\
+/opt/hpvm/bin/hpvminfo\
+/opt/hpvm/bin/hpvmstatus\
+/bin/ls\
+/usr/bin/cksum\
+/usr/bin/dd\
+/usr/sbin/lsof\
+/usr/bin/cat\
+/usr/local/bin/collectionengine-hpux-parisc\
+/usr/local/bin/inq.HPUXIA64
+
+IBM_TADDM_DISC_HPU_BAU TADMMD_HOSTS = NOPASSWD:IBM_TADDMD_BAU_HPU_CMDS
