@@ -212,8 +212,10 @@ def main():
         elif "Sun" == os_type:
           ce = 'collectionengine-solaris-sparc'
           
-        if val.validateSudo(ce):
-          log.info(ce + ' found in sudo')
+        # if /etc/hba.conf does not exist, then CE is not deployed
+        hba_conf_exists = helper.does_exist('/etc/hba.conf')
+        if val.validateSudo(ce) or not hba_conf_exists:
+          log.info(ce + ' found in sudo or /etc/hba.conf does not exist')
           # check for fcinfo on Sun required by SolarisFC.py ext
           if "Sun" == os_type and val.validateSudo('fcinfo') is False:
             log.info('fcinfo for SolarisFC.py discovery extension not found in sudo')
@@ -224,17 +226,18 @@ def main():
           else:
             xa['sudo_hba'] = 'valid'
 
-          # check collectionengine path against home directory
-          paths = val.commandPath(ce)
-          pwd = sensorhelper.executeCommand('pwd').strip()
-          xa['sudo_hba_path'] = 'invalid'
-          for path in paths:
-            log.debug('Checking path ' + path + ' against ' + pwd)
-            log.debug('Split path ' + '/'.join(path.split('/')[:-1]))
-            if '/'.join(path.split('/')[:-1]) == pwd:
-              xa['sudo_hba_path'] = 'valid'
-          log.info('sudo hba (collectionengine) path is ' + str(xa['sudo_hba_path']))
-            
+          # make sure /etc/hba.conf exists to ensure CE deploy is valid
+          if hba_conf_exists:
+            # check collectionengine path against home directory
+            paths = val.commandPath(ce)
+            pwd = sensorhelper.executeCommand('pwd').strip()
+            xa['sudo_hba_path'] = 'invalid'
+            for path in paths:
+              log.debug('Checking path ' + path + ' against ' + pwd)
+              log.debug('Split path ' + '/'.join(path.split('/')[:-1]))
+              if '/'.join(path.split('/')[:-1]) == pwd:
+                xa['sudo_hba_path'] = 'valid'
+            log.info('sudo hba (collectionengine) path is ' + str(xa['sudo_hba_path']))
         else:
           log.info(ce + ' not found in sudo')
           xa['sudo_hba'] = 'invalid'
