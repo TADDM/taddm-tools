@@ -263,10 +263,13 @@ def main():
               if helper.validateCommand('lsscsi'):
                 version = sensorhelper.executeCommand('lsscsi -V 2>&1')
                 if version and Decimal(version.split()[1]) < Decimal('0.26'):
-                  log.info('sg_inq not installed and lsscsi < 0.26, sudo_emc = invalid')
-                  xa['sudo_emc'] = 'invalid'
+                  lsscsi_out = sensorhelper.executeCommand('lsscsi')
+                  # check if there are any EMC Invista or DGC (V)RAID disks
+                  if re.search('.*EMC.*', lsscsi_out) or re.search('.*DGC.*', lsscsi_out):
+                    log.info('sg_inq not installed, lsscsi < 0.26, EMC disks found - sudo_emc = invalid')
+                    xa['sudo_emc'] = 'invalid'
               else:
-                log.info('sg_inq and lsscsi not installed, sudo_emc = invalid')
+                log.info('sg_inq and lsscsi not installed - sudo_emc = invalid')
                 xa['sudo_emc'] = 'invalid'
       else:
         log.info('sudo_emc: output produced')
