@@ -100,40 +100,6 @@ def main():
     
     is_vmware = helper.is_vmware(computersystem)
     
-    # is_vm = False
-    # if computersystem.hasModel() and computersystem.getModel().startswith('VMware Virtual Platform'):
-      # is_vm = True
-    # else:
-      # log.info('Target is not VMware VM, skipping EMC INQ')
-      # log.info("EMC INQ discovery extension ended.")
-      # return
-
-    # try:
-      # output = sensorhelper.executeCommand('lsscsi')
-      # # check if there are any EMC Invista disks
-      # if re.search('.*EMC.*', output) is None:
-        # log.info('lsscsi did not detect any EMC disks to discover')
-        # log.info("EMC INQ discovery extension ended.")
-        # return
-    # except:
-      # log.info('lsscsi not found on server, halting execution')
-      # log.info("EMC INQ discovery extension ended.")
-      # return
-
-    # INQ is needed only if sg_inq not installed and lsscsi version < 0.26
-    # check if sg_inq installed
-    # if helper.validateCommand('sg_inq'):
-      # log.info('sg_inq is installed, do not need EMC INQ')
-      # log.info("EMC INQ discovery extension ended.")
-      # return
-    # else:
-      # # check if lsscsi version > 0.25
-      # version = sensorhelper.executeCommand('lsscsi -V 2>&1')
-      # if version and Decimal(version.split()[1]) > Decimal('0.25'):
-        # log.info('lsscsi is at version 0.26+, do not need EMC INQ')
-        # log.info("EMC INQ discovery extension ended.")
-        # return
-    
     # EMC inquiry tool can be downloaded from ftp://ftp.emc.com/pub/symm3000/inquiry/
     if os_type == 'Linux':
       inq = 'inq.LinuxAMD64'
@@ -192,8 +158,6 @@ def main():
       
       log.info(inq + ' not installed under ' + remotePath + ', binary was staged in ' + pwd)
       remotePath = pwd
-      # log.info("EMC INQ discovery extension ended.")
-      # return
   
     # check if command in sudo
     cmd = remotePath + inq
@@ -292,6 +256,18 @@ def main():
             # for ALL physical Sun hosts we want to run the EMC INQ tool
             log.info('sudo_emc: physical Sun')
             xa['sudo_emc'] = 'invalid'
+          elif os_type == 'Linux':
+            # EMC INQ is needed only if sg_inq not installed and lsscsi version < 0.26
+            # otherwise RDM.py can discover
+            if not helper.validateCommand('sg_inq'):
+              if helper.validateCommand('lsscsi'):
+                version = sensorhelper.executeCommand('lsscsi -V 2>&1')
+                if version and Decimal(version.split()[1]) < Decimal('0.26'):
+                  log.info('sg_inq not installed and lsscsi < 0.26, sudo_emc = invalid')
+                  xa['sudo_emc'] = 'invalid'
+              else:
+                log.info('sg_inq and lsscsi not installed, sudo_emc = invalid')
+                xa['sudo_emc'] = 'invalid'
       else:
         log.info('sudo_emc: output produced')
         if cmd_sudo:
