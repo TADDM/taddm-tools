@@ -62,7 +62,7 @@ for ext_path in ext_paths:
           print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
           pass
 
-import helper        
+import helper   
 from sudo import Validator
 
 ########################################################
@@ -104,7 +104,7 @@ def fcinfo():
     log.info('fcinfo not in sudo') # don't attempt sudo fcinfo
     return fc_vols
   
-  if not helper.file_exists('/usr/sbin/fcinfo'):
+  if not helper.does_exist('/usr/sbin/fcinfo'):
     log.info('/usr/sbin/fcinfo does not exist')
     return fc_vols
 
