@@ -174,6 +174,12 @@ def main():
     
     # check if INQ installed in /usr/local/bin/
     if not helper.does_exist(remotePath + inq):
+    
+      # make sure home directory is writable before we continue
+      if not helper.is_writable('.'):
+        log.info('HOME directory is not writable, discovery cannot continue')
+        return
+
       # copy inq to targets
       lpath = coll_home + "/etc/templates/commands/extension-scripts/" + inq
       # TODO verify local binary exists

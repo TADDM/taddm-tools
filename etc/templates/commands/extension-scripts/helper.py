@@ -200,6 +200,29 @@ def is_exec(file):
     return False
 
 ########################
+# is_writable  Runs test on target to see if file/directory writable
+#
+#                       Parameters
+#                               file  file/directory to check
+#
+#                       Returns
+#                               True if file/directory writable
+#                               False if file/directory not writable
+#
+#                       Exceptions
+#                               
+########################
+def is_writable(file):
+  try:
+    print 'checking for writable file = ' + file
+    sensorhelper.executeCommand('test -w ' + file + ' 2>/dev/null')
+    print 'file writable'
+    return True
+  except:
+    print 'file not writable'
+    return False
+
+########################
 # is_vmware  Check if computersystem is vmware
 #
 #                       Parameters
