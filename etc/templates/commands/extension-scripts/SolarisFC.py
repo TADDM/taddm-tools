@@ -61,7 +61,8 @@ for ext_path in ext_paths:
         except:
           print 'ERROR: Unable to rename ' + filename + ' to ' + basename + '$py.class'
           pass
-        
+
+import helper        
 from sudo import Validator
 
 ########################################################
