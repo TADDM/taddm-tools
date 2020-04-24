@@ -80,6 +80,7 @@ Cmnd_Alias IBM_TADDMD_BAU_SOL_CMDS=\
 /opt/VRTSvcs/bin/hagrp, \
 /opt/VRTSvcs/bin/hatype, \
 /opt/VRTSvcs/bin/hauser, \
+/usr/sbin/fcinfo, \
 /usr/local/bin/collectionengine-solaris-sparc, \
 /usr/local/bin/inq.sol64, \
 /usr/local/bin/inq.solarisx86_64, \
