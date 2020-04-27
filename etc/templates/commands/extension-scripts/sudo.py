@@ -228,14 +228,17 @@ def main():
 
           # make sure /etc/hba.conf exists to ensure CE deploy is valid
           if hba_conf_exists:
-            # check collectionengine path against home directory
+            # check collectionengine sudo path against CE directory
             paths = val.commandPath(ce)
-            pwd = sensorhelper.executeCommand('pwd').strip()
+            ce_path = sensorhelper.executeCommand('pwd').strip()
+            # if CE is under /usr/local/bin, then use this path instead
+            if helper.does_exist('/usr/local/bin/' + ce):
+              ce_path = '/usr/local/bin'
             xa['sudo_hba_path'] = 'invalid'
             for path in paths:
-              log.debug('Checking path ' + path + ' against ' + pwd)
+              log.debug('Checking path ' + path + ' against ' + ce_path)
               log.debug('Split path ' + '/'.join(path.split('/')[:-1]))
-              if '/'.join(path.split('/')[:-1]) == pwd:
+              if '/'.join(path.split('/')[:-1]) == ce_path:
                 xa['sudo_hba_path'] = 'valid'
             log.info('sudo hba (collectionengine) path is ' + str(xa['sudo_hba_path']))
         else:
