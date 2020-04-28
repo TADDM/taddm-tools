@@ -255,3 +255,22 @@ def is_virtual(computersystem):
   print 'Is server virtual? ' + str(is_virtual)
   
   return is_virtual
+
+# get any previously discovered volumes from result
+def get_volumes(result, log=None):
+  # get any previously discovered volumes
+  vols = {}
+  ext_results = result.getExtendedResults()
+  iter = ext_results.iterator()
+  while iter.hasNext():
+    ext_result = iter.next()
+    class_name = get_class_name(ext_result)
+    if re.search("FCVolume",class_name,re.I):
+      if log:
+        log.debug('Found existing FCVolume:' + str(ext_result))
+      vols[ext_result.getName()] = ext_result
+    elif re.search("SCSIVolume",class_name,re.I):
+      vols[ext_result.getName()] = ext_result
+      if log:
+        log.debug('Found existing SCSIVolume:' + str(ext_result))
+  return vols

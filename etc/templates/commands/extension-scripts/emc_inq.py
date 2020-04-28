@@ -168,19 +168,8 @@ def main():
       cmd = 'sudo ' + remotePath + inq
     
     # get any previously discovered volumes
-    vols = {}
-    ext_results = result.getExtendedResults()
-    iter = ext_results.iterator()
-    while iter.hasNext():
-      ext_result = iter.next()
-      class_name = helper.get_class_name(ext_result)
-      if re.search("FCVolume",class_name,re.I):
-        log.debug('Found existing FCVolume:' + str(ext_result))
-        vols[ext_result.getName()] = ext_result
-      elif re.search("SCSIVolume",class_name,re.I):
-        vols[ext_result.getName()] = ext_result
-        log.debug('Found existing SCSIVolume:' + str(ext_result))
-        
+    vols = helper.get_volumes(result, log)
+
     try:
       # output = sensorhelper.executeCommand(cmd + ' -no_dots -vplex_wwn')
       output = sensorhelper.executeCommand(cmd + ' -no_dots -wwn')
