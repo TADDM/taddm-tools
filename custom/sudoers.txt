@@ -22,6 +22,7 @@ Cmnd_Alias IBM_TADDMD_BAU_AIX_CMDS=\
 /usr/bin/cat, \
 /usr/local/bin/collectionengine-aix-powerpc, \
 /usr/local/bin/collectionengine-aix-powerpc_64, \
+/usr/local/bin/inq, \
 /usr/local/bin/inq.aix64_51
 
 IBM_TADDM_DISC_AIX_BAU TADMMD_HOSTS = NOPASSWD:IBM_TADDMD_BAU_AIX_CMDS
@@ -55,6 +56,7 @@ Cmnd_Alias IBM_TADDMD_BAU_LIN_CMDS=\
 /usr/local/bin/inq.LinuxAMD64, \
 /usr/local/bin/inq.linux, \
 /usr/local/bin/inq.LinuxIA64, \
+/usr/local/bin/inq, \
 /usr/bin/sg_inq, \
 /sbin/powermt display dev=all
 
@@ -84,6 +86,8 @@ Cmnd_Alias IBM_TADDMD_BAU_SOL_CMDS=\
 /usr/local/bin/collectionengine-solaris-sparc, \
 /usr/local/bin/inq.sol64, \
 /usr/local/bin/inq.solarisx86_64, \
+/usr/local/bin/inq, \
+/usr/local/bin/inq.sol9, \
 /etc/powermt display dev\=all
 
 IBM_TADDM_DISC_SOL_BAU TADMMD_HOSTS = NOPASSWD:IBM_TADDMD_BAU_SOL_CMDS
