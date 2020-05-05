@@ -14,7 +14,7 @@ EMAIL=
 for org in `ls scopes/session_errors_*.scope | awk -F_ '{print $NF}' | awk -F\. '{print $1}' | sort | uniq`
 do
   attachments=""
-  if [ `wc -l scopes/session_errors_${org}.scope|awk '{print $1}'` -gt 1 ]; then
+  if [ `wc -l scopes/session_errors_${org}.scope|awk '{print $1}'` -ge 1 ]; then
     attachments="$attachments -a scopes/session_errors_${org}.scope"
   fi
 
