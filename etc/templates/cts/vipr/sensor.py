@@ -521,7 +521,14 @@ try:
 
                   fcport = sensorhelper.newModelObject('cdm:dev.FCPort')
                   fcport.setParent(sss)
-                  fcport.setPermanentAddress(WorldWideNameUtils.toUniformString(portwwn))
+                  try:
+                    fcport.setPermanentAddress(WorldWideNameUtils.toUniformString(portwwn))
+                  except:
+                    e = sys.exc_info()[1]
+                    msg = 'VPlex portwwn address malformed, skipping ' + portwwn
+                    log.warning(msg)
+                    log.info('Error : ' + str(e))
+                    continue
                   speed = float(maxspeed) * 1024 * 1024 * 1024
                   fcport.setSpeed(long(speed))
                   fcport.setPortNumber(0)
