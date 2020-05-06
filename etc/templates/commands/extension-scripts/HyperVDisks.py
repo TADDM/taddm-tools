@@ -60,13 +60,6 @@ import traceback
 import sensorhelper
 
 ########################################################
-# Some default GLOBAL Values (Typically these should be in ALL CAPS)
-# Jython does not have booleans
-########################################################
-True = 1
-False = 0
-
-########################################################
 # LogError Error Logging
 ########################################################
 def LogError(msg):
@@ -89,18 +82,6 @@ try:
 
   log.info("HyperVDisks discovery extension started (written by Mat Davis - mdavis5@us.ibm.com).")
 
-  # build skinny computersystem for storage performance
-  cs = sensorhelper.newModelObject('cdm:sys.windows.WindowsComputerSystem')
-  if computersystem.hasSignature():
-    cs.setSignature(computersystem.getSignature())
-  elif computersystem.hasSerialNumber() and computersystem.hasModel() and computersystem.hasManufacturer():
-    cs.setSerialNumber(computersystem.getSerialNumber())
-    cs.setModel(computersystem.getModel())
-    cs.setManufacturer(computersystem.getManufacturer())
-  else:
-    log.info('Could not find naming rules to build skinny computer system, storage performance might suffer from using full computer system')
-    cs = computersystem
-  
   try:
     output = sensorhelper.executeCommand('"C:\Program Files\EMC\PowerPath\Powermt.exe" display dev=all')
   except:
@@ -108,103 +89,55 @@ try:
     raise CommandNotFoundError('Powermt.exe not found')
 
   disk = None
-  vplexid = None
   uuid = None
-  vvol = None
+  vol_name = None
   vplexes = {}
   for line in output.splitlines():
     if line.startswith('Pseudo name=harddisk'):
       disk = line.split('=harddisk')[1]
-    if line.startswith('VPLEX ID='):
-      vplexid = line.split('=')[1].strip()
     if line.startswith('Logical device ID='):
+      if '??' in disk:
+        log.info('Malformed disk number, skipping disk harddisk??')
+        continue
       uuid = line.split('=')[1].split(' ')[0]
       if len(line.split(' ')) > 3:
-        vvol = line.split(' ')[3].replace('[', '').replace(']','')
+        vol_name = line.split(' ')[3].replace('[', '').replace(']','')
       elif len(line.split()) > 2:
-        vvol = None
+        vol_name = None
       else:
         log.info('Skipping line missing volume information: ' + line)
         disk = None
-        vplexid = None
         uuid = None
         continue
-      if disk and vplexid:
-        log.info(str(disk) + ' ' + str(vplexid) + ' ' + str(uuid) + ' ' + str(vvol))
+      if disk:
+        log.info(str(disk) + ' ' + str(uuid) + ' ' + str(vol_name))
         
-        if vplexid in vplexes:
-          # VPlex already defined
-          sss = vplexes[vplexid]
-        else:
-          # filling out a few basic details of VPlex just in case ViPR sensor has not discovered yet
-          sss = sensorhelper.newModelObject('cdm:storage.StorageSubSystem')
-          # add storage function
-          func = sensorhelper.newModelObject('cdm:storage.StorageControllerFunction')
-          func.setParent(sss)
-          func.setName("Storage")
-          sss.setFunctions(sensorhelper.getArray([func],'cdm:sys.Function'))
-          # set openID serial so that this will merge with ViPR discovered VPlex
-          sss.setOpenId(OpenId(sss).addId('vplexserial', vplexid))
-          sss.setSerialNumber(vplexid)
-          sss.setAnsiT10Id(vplexid) # this should also cause merge with ViPR discovered VPlex
-          sss.setType('VirtualStorage')
-          vplexes[vplexid] = sss # cache sss
-
-        vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-        if vvol:
-          vsv.setName(vvol)
-        vsv.setVirtual(True)
+        lun = sensorhelper.newModelObject('cdm:dev.StorageVolume')
+        if vol_name:
+          lun.setName(vol_name)
         # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
         # have been using it all over the place as a hack
-        vsv.setManagedSystemName(uuid)
-        
-        # do not set members array, ViPR sensor extension will set this
-        
-        #result.addExtendedResult(vsv)
+        lun.setManagedSystemName(uuid)
         
         fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
         fcv.setName('Disk ' + disk)
-        fcv.setParent(cs)
+        fcv.setParent(computersystem)
         # create relationships
         bo = sensorhelper.newModelObject('cdm:dev.BasedOnExtent')
         bo.setSource(fcv)
-        bo.setTarget(vsv)
+        bo.setTarget(lun)
         bo.setType('com.collation.platform.model.topology.dev.BasedOnExtent')
         fcv.setBasedOn(sensorhelper.getArray([bo],'cdm:dev.BasedOnExtent'))
         result.addExtendedResult(fcv)
         
-        vsv = sensorhelper.newModelObject('cdm:dev.StorageVolume')
-        if vvol:
-          vsv.setName(vvol)
-        vsv.setVirtual(True)
-        # ManagedSystemName is SUPPOSED to be reserved for ITM/TMS integration, however the developers
-        # have been using it all over the place as a hack
-        vsv.setManagedSystemName(uuid)
-        fcv = sensorhelper.newModelObject('cdm:dev.FCVolume')
-        fcv.setName('Disk ' + disk)
-        fcv.setParent(cs)
-        realizes = sensorhelper.newModelObject('cdm:dev.RealizesExtent')
-        realizes.setSource(vsv)
-        realizes.setTarget(fcv)
-        realizes.setType('com.collation.platform.model.topology.dev.RealizesExtent')
-        result.addExtendedResult(realizes)
-        
         # reset all values
         disk = None
-        vplexid = None
         uuid = None
-        vvol = None
+        vol_name = None
   
-  for vplex in vplexes.values():
-    # create uses relation for each vplex
-    uses = sensorhelper.newModelObject('cdm:relation.Uses')
-    uses.setSource(cs)
-    uses.setTarget(vplex)
-    uses.setType('com.collation.platform.model.topology.relation.Uses')
-    # DANGER! By updating the vplex and not updating all the virtual volume members on the vplex, you
-    # open up the possibility of the StorageExtentCleanupAgent deleting a bunch of virtual volumes.
-    # Do not store the VPLEX
-    #result.addExtendedResult(uses)
+    # WARNING! By updating the SSS that hosts the LUN and not updating all the volume members on the 
+    # SSS, you open up the possibility of the StorageExtentCleanupAgent deleting a bunch of volumes.
+    # Do not store the SSS in any way
 
   log.info("HyperVDisks discovery extension ended.")
 except CommandNotFoundError:
