@@ -227,6 +227,11 @@ try:
   log.info("Windows RDM discovery extension ended.")
 except:
   (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
-  errMsg = 'Unexpected error occurred during discover: ' + str(ErrorValue)
-  LogError(errMsg)
-  result.warning(errMsg)
+  errMsg = 'Unexpected error occurred during EMC INQ storage discovery: ' + str(ErrorValue)
+  # known error related to diskless high powered computing, ignore this error
+  if 'InitializeDefaultDrives' in str(ErrorValue):
+    log.info('Known error for diskless HPC: ' + str(ErrorValue))
+  else:
+    LogError(errMsg)
+    result.warning(errMsg)
+  log.info("Windows RDM discovery extension ended.")
