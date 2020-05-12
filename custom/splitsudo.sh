@@ -30,7 +30,7 @@ do
 	  # extracted to scopes/ and the file names start with B_*. Removing
 	  # any scopeset files that have "rescan" in the name. Also assuming that
 	  # description field in scopeset is of the form "hostname>datacenter>org"
-      org=`grep "$ip," scopes/B_*.scope | grep -v "rescan" | awk -F, '{print $3}' | awk -F\> '{print $3}'`
+      org=`grep "$ip," scopes/B_*.scope | grep -v "rescan" | grep -iv test |  awk -F, '{print $3}' | awk -F\> '{print $3}'`
       if [ -z "$org" ]; then
         echo "$ip not found in any organization"
         grep "$ip," scopes/${scope}_invalid.scope >> scopes/${scope}_invalid_UNKNOWN.scope
