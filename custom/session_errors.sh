@@ -13,7 +13,7 @@ BINDIR=$COLLATION_HOME/bin
 COMMONPART="$BINDIR/common.sh"
 . $COMMONPART
 
-USER=administrator
+USER=operator
 PASSWORD=collation
 
 rm scopes/session_errors*.scope 2>/dev/null
@@ -24,9 +24,9 @@ do
   ssh=false
   wmi=false
   while read ports
-  do 
+  do
     for port in `echo "${ports//,}"`
-    do 
+    do
       if [ "$port" -eq "135" ]
       then
         # if port 135 is found then it is WMI login
@@ -39,39 +39,19 @@ do
       fi
     done
   done <<< $(echo $row | cut -d "[" -f2 | cut -d "]" -f1)
-  
-  #
-  # This section checks to see if the IP target is in a "managed" scope set.
-  # These are scopesets that are discovered regularly. It is best practice to
-  # use a naming convention for these scope sets.
-  # 
-  # This assumes that the qallscopes.sh script has been run previously and all
-  # the scopesets are in .scope files under custom/scopes.
-  #
-  # You will need to tailor the grep command below to your environment to match
-  # the scope files that are part of your managed scopesets.
-  #
   scope=`grep -l "$ip," scopes/B_*.scope | grep -E 'B_[a-zA-Z0-9]+_(UNIX|Win|ESXi)_[0-9]+.scope'`
-  
-  # make sure that IP is in a managed scope
   if [ ! -z "$scope" ]; then
-    #
-    # extracting the organization from the scope
-    # 
-    # You will need to tailor this to your environment, if the Systems Admin
-    # org is somewhere in the scope description. In the example below, the
-    # org is found in the description after 2 '>' symbols
-    #
     org=`grep "$ip," $scope | awk -F, '{print $3}' | awk -F\> '{print $3}'`
     if [ -z "$org" ]; then
       org="UNKNOWN"
     fi
+    org=$(echo ${org^})
     method="unknown"
     if [ "$ssh" = true ]; then
       method="ssh"
       if [ "$wmi" = true ]; then
         method="ssh/wmi"
-        fi
+      fi
     elif [ "$wmi" = true ]; then
       method="wmi"
     fi
