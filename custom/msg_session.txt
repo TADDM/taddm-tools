@@ -1,0 +1,4 @@
+Attached are text files (.scope) containing hosts where service account login failed.
+
+Also attached is sudoers.txt, which is the official, approved sudoers configuration for TADDM.
+Use these values to configure sudo for the TADDM service account on Unix hosts.
