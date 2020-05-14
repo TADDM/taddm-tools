@@ -29,21 +29,6 @@ do
 
   if [[ ! -z "$attachments" ]]; then
     attachments="$attachments -a sudoers.txt"
-    mailx -s "TADDM sudo config (${org})" -r "TADDM <${USER}@${HOSTNAME}>" $attachments $EMAIL 2>/dev/null << EOL
-Attached are text files (.scope) containing hosts where sudo is either not configured or not configured properly. Note that if a particular file is not attached, then there were no issues detected for that config type.
-
-Key:
-  sudo_invalid_${org}.scope - sudo not configured or requiretty problem
-  sudo_lsof_invalid_${org}.scope - lsof not in sudo
-  sudo_dmidecode_invalid_${org}.scope - dmidecode not in sudo for Linux host
-  sudo_hba_invalid_${org}.scope - collectionengine not in sudo and/or fcinfo not in sudo for Solaris and/or powermt not in sudo for physical Linux if installed
-  sudo_emc_invalid_${org}.scope - EMC INQ tool not in sudo, also move inq.<platform> binary from service account home directory to /usr/local/bin
-  sudo_hba_path_invalid_${org}.scope - collectionengine path mismatch, most likely unexpected home dir path for service account
-  sudo_rdm_invalid_${org}.scope - sg_inq not in sudo for VMware Linux VM containing RDM
-
-Also attached is sudoers.txt, which is the official, approved sudoers configuration for TADDM.
-Use these values to configure sudo for the TADDM service account.
-
-EOL
+    eval "echo \"$(cat msg_sudo.txt)\"" | mailx -s "TADDM sudo config (${org})" -r "TADDM <${USER}@${HOSTNAME}>" $attachments $EMAIL 2>/dev/null
   fi
 done
