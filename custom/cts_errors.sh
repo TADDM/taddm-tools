@@ -13,10 +13,12 @@ BINDIR=$COLLATION_HOME/bin
 COMMONPART="$BINDIR/common.sh"
 . $COMMONPART
 
-#
-# set comma separated email addresses
-#
-EMAIL=taddm@mycompany.com
+PROPS=$SCRIPTPATH/custom.properties
+if [ -e $PROPS ]; then
+  EMAIL=`awk -F= '/^EMAIL/ {print $2}' $PROPS`
+else
+  echo "Properties file $PROPS not found, no email will be sent"
+fi
 
 USER=operator
 PASSWORD=collation
