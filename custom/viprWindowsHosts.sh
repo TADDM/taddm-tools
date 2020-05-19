@@ -20,13 +20,38 @@ do
       # echo " "$ip",,"$hostname
     fi
   done
+
   if [ "$found" == "false" ]
   then
+    # try to use hostname to find IP
     ip=`nslookup $hostname | tail -2 | grep '^Address' | awk '{printf $2}'`
-    if [ "$ip" == "" ]; then
-      echo -n "#"
+    if [ ! -z "$ip" ]
+    then
+      found="true"
+      echo $ip",,"$hostname
     fi
-    echo $ip",,"$hostname
+  fi
+
+  if [ "$found" == "false" ]
+  then
+    # use the first lookup with any results
+    for ip in `echo $line | awk -F: '{printf $2}' | tr "," " "`
+    do
+      if nslookup $ip >/dev/null
+      then
+        echo $ip",,"$hostname
+        found="true"
+        break
+      fi
+    done
+  fi
+
+  if [ "$found" == "false" ]
+  then
+    # still nothing, use the first IP
+    firstip=`echo $line | awk -F: '{printf $2}' | tr "," " " | awk '{printf $1}'`
+    echo $firstip",,"$hostname
   fi
 done | sort | uniq
+
 
