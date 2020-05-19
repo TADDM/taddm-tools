@@ -8,10 +8,12 @@ SCRIPTPATH=$(dirname "$SCRIPT")
 
 cd $SCRIPTPATH
 
-#
-# set comma separated email addresses
-#
-EMAIL=
+PROPS=$SCRIPTPATH/custom.properties
+if [ -e $PROPS ]; then
+  EMAIL=`awk -F= '/^EMAIL/ {print $2}' $PROPS`
+else
+  echo "Properties file $PROPS not found, no email will be sent"
+fi
 
 # SA organizations
 for org in `ls scopes/sudo_*invalid_*.scope scopes/session_errors_*.scope | awk -F_ '{print $NF}' | awk -F\. '{print $1}' | sort | uniq`
