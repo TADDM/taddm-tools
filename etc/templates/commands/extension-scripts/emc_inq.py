@@ -272,6 +272,9 @@ def main():
       helper.setExtendedAttributes(computersystem, xa)
       
     except:
+      # strip out sudo to test command executable
+      if 'sudo' in cmd:
+        cmd = cmd.replace('sudo ', '')
       if helper.is_exec(cmd):
         log.info(cmd + ' command failed, halting execution of disk discovery.')
         (ErrorType, ErrorValue, ErrorTB) = sys.exc_info()
