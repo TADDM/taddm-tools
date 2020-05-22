@@ -175,12 +175,11 @@ try:
             vol = vols[name] # use existing
             sg_inq(disk, vol)
           else:
-            cdm_type = 'cdm:dev.FCVolume'
+            vol = sensorhelper.newModelObject('cdm:dev.FCVolume')
             # create SCSIVolume if RDM instead of FCVolume
             if is_vmware:
-              cdm_type = 'cdm:dev.SCSIVolume'
+              vol = sensorhelper.newModelObject('cdm:dev.SCSIVolume')
               vol.setDescription('RDM')
-            vol = sensorhelper.newModelObject(cdm_type)
             vol.setParent(computersystem)
             vol.setName(name)
             vol.setDeviceID(disk)
