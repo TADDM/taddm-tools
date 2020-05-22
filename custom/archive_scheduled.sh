@@ -10,7 +10,7 @@ cd $COLLATION_HOME/custom
 # !!! CHANGE THESE VARIABLES TO APPLY TO YOUR ENVIRONMENT !!!
 ARCHIVEPROPS=$COLLATION_HOME/custom/archive.properties
 AGE=182
-USER=administrator
+USER=operator
 PASSWORD=collation
 DELETE=false
 SKIPZOS=false
