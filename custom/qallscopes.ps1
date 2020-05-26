@@ -9,7 +9,7 @@ Set-Location -Path $dir
 New-Item scopes -type directory -force >$null 2>&1
 
 # !!! CHANGE THESE VARIABLES TO APPLY TO YOUR ENVIRONMENT !!!
-$user = 'administrator'
+$user = 'operator'
 $password = 'collation'
 
 Set-Location -Path $dir\..\bin
