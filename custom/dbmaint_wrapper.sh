@@ -12,6 +12,27 @@ BINDIR=$COLLATION_HOME/bin
 COMMONPART="$BINDIR/common.sh"
 . $COMMONPART
 
+while getopts "a" o; do
+  case "${o}" in
+    a)
+	  # alternate, run every other execution
+      a=true
+      ;;
+  esac
+done
+
+if [ ! -z "${a}"]
+then
+  mark_file=$SCRIPTPATH/.dbmaint-marker
+  # only run every other execution
+  if [ -e $mark_file ]; then
+	rm -f $mark_file
+  else
+	touch $mark_file
+	exit 0
+  fi
+fi
+
 echo "`date` dbmaint_wrapper.sh starting"
 
 if [ -e $SCRIPTPATH/dbmaint.properties ]; then
