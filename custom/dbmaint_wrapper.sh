@@ -21,7 +21,7 @@ while getopts "a" o; do
   esac
 done
 
-if [ ! -z "${a}"]
+if [ ! -z "${a}" ]
 then
   mark_file=$SCRIPTPATH/.dbmaint-marker
   # only run every other execution
