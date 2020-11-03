@@ -214,6 +214,11 @@ def main():
           
         # if /etc/hba.conf does not exist, then CE is not deployed
         hba_conf_exists = helper.does_exist('/etc/hba.conf')
+        # if Sun x86 system, then CE is not deployed
+        sun_x86 = False
+        if "Sun" == os_type and computersystem.hasArchitecture():
+          if "i86pc" == computersystem.getArchitecture():
+            sun_x86 = True
         if val.validateSudo(ce) or not hba_conf_exists:
           log.info(ce + ' found in sudo or /etc/hba.conf does not exist')
           # check for fcinfo on Sun required by SolarisFC.py ext
@@ -226,8 +231,7 @@ def main():
           else:
             xa['sudo_hba'] = 'valid'
 
-          # make sure /etc/hba.conf exists to ensure CE deploy is valid
-          if hba_conf_exists:
+          if hba_conf_exists and not sun_x86:
             # check collectionengine sudo path against CE directory
             paths = val.commandPath(ce)
             ce_path = sensorhelper.executeCommand('pwd').strip()
@@ -242,8 +246,11 @@ def main():
                 xa['sudo_hba_path'] = 'valid'
             log.info('sudo hba (collectionengine) path is ' + str(xa['sudo_hba_path']))
         else:
-          log.info(ce + ' not found in sudo')
-          xa['sudo_hba'] = 'invalid'
+          if sun_x86:
+            log.info('SunOS is running on x86 hardware, collectionengine not supported')
+          else:
+            log.info(ce + ' not found in sudo')
+            xa['sudo_hba'] = 'invalid'
         log.info('sudo hba (collectionengine) is ' + str(xa['sudo_hba']))
         
       # check for Linux specific
